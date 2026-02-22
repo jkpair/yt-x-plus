@@ -1179,6 +1179,9 @@ run_yt_dlp() {
   local playlist_range_opts=()
   if ! is_youtube_feed "$1"; then
     playlist_range_opts=(--playlist-start "$PLAYLIST_START" --playlist-end "$PLAYLIST_END")
+  elif [ -n "$2" ]; then
+    # Optional entry limit for feeds (e.g. refresh only needs first page)
+    playlist_range_opts=(--playlist-end "$2")
   fi
   if command -v "gum" >/dev/null 2>&1; then
     result=$(gum spin --show-output -- yt-dlp "$1" -J --flat-playlist --extractor-args youtubetab:approximate_date "${playlist_range_opts[@]}" "${PREFERRED_BROWSER_OPTS[@]}" 2>/dev/null)
@@ -1207,6 +1210,21 @@ core_dep_ch() {
   ! command -v "yt-dlp" >/dev/null 2>&1 && echo "Error: yt-dlp is not installed. Please install it to proceed." >&2 && exit 1
   ! command -v "jq" >/dev/null 2>&1 && echo "Error: jq is not installed. Please install it to proceed." >&2 && exit 1
   ! command -v "fzf" >/dev/null 2>&1 && echo "Error: fzf is not installed. Please install it to proceed." >&2 && exit 1
+}
+
+check_ytdlp_version() {
+  local installed latest
+  installed="$(yt-dlp --version 2>/dev/null)" || return 1
+  latest="$(curl -s --max-time 3 https://pypi.org/pypi/yt-dlp/json 2>/dev/null | jq -r '.info.version' 2>/dev/null)" || return 1
+  [[ -z "$latest" || "$latest" == "null" ]] && return 1
+
+  if [[ "$installed" == "$latest" ]]; then
+    printf '%b\n' "${GREEN}yt-dlp is up to date ($installed)${RESET}"
+    return 0
+  else
+    printf '%b\n' "${YELLOW}yt-dlp is outdated (installed: $installed, latest: $latest). Consider updating.${RESET}"
+    return 1
+  fi
 }
 
 # Detect Linux distribution
@@ -2095,13 +2113,16 @@ playlist_explorer() {
       continue
       ;;
     Refresh)
-      # Reload the homepage feed with fresh content
-      PLAYLIST_START=1
-      PLAYLIST_END="$NO_OF_SEARCH_RESULTS"
-      search_results=$(run_yt_dlp "$url")
-      feed_all_results="$search_results"
-      feed_page=1
-      DOWNLOAD_IMAGES=0
+      # Reload the homepage feed with fresh content (limit to one page)
+      local refresh_results
+      if refresh_results=$(run_yt_dlp "$url" "$NO_OF_SEARCH_RESULTS"); then
+        search_results="$refresh_results"
+        feed_all_results="$search_results"
+        feed_page=1
+        DOWNLOAD_IMAGES=0
+      else
+        send_notification "Refresh failed, keeping current feed"
+      fi
       continue
       ;;
     Previous)
@@ -2159,6 +2180,7 @@ ${ORANGE}󱑤${RESET}  Download (Audio Only)
 ${ORANGE}󰦗${RESET}  Download All (Audio Only)
 ${GRAY}┈┈┈┈┈┈┈${RESET} ${DIM}Other${RESET} ${GRAY}┈┈┈┈┈┈┈┈${RESET}
 ${PURPLE}󰖟${RESET}  Open in Browser
+${PURPLE}󰆏${RESET}  Copy Link
 ${PURPLE}󰃻${RESET}  Toggle Enumerate Downloads
 ${PURPLE}󰆍${RESET}  Shell
 ${GRAY}┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈${RESET}
@@ -2418,6 +2440,25 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/^.[[:space:]
           xdg-open "$(echo "$video" | jq '.url' -r)"
         else
           send_notification "Could not find xdg-open or open"
+        fi
+        ;;
+      "Copy Link")
+        local video_link
+        video_link="$(echo "$video" | jq '.url' -r)"
+        if command -v "wl-copy" >/dev/null 2>&1; then
+          printf '%s' "$video_link" | wl-copy
+          send_notification "Link copied to clipboard"
+        elif command -v "xclip" >/dev/null 2>&1; then
+          printf '%s' "$video_link" | xclip -selection clipboard
+          send_notification "Link copied to clipboard"
+        elif command -v "xsel" >/dev/null 2>&1; then
+          printf '%s' "$video_link" | xsel --clipboard --input
+          send_notification "Link copied to clipboard"
+        elif command -v "pbcopy" >/dev/null 2>&1; then
+          printf '%s' "$video_link" | pbcopy
+          send_notification "Link copied to clipboard"
+        else
+          send_notification "No clipboard tool found (install wl-copy, xclip, or xsel)"
         fi
         ;;
       Download)
@@ -2814,6 +2855,7 @@ ${BLUE}󰮆${RESET}  Edit yt-dlp Config
 ${BLUE}󱘫${RESET}  Edit Custom Commands
 ${GRAY}┈┈┈┈┈┈┈${RESET} ${DIM}Sync${RESET} ${GRAY}┈┈┈┈┈┈┈┈┈${RESET}
 ${PURPLE}󰓦${RESET}  Sync YouTube Subscriptions
+${PURPLE}󰏗${RESET}  Check yt-dlp Version
 ${RED}󰆴${RESET}  Clear Search History
 ${GRAY}┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈${RESET}
 ${RED}󰌍${RESET}  Back
@@ -2979,6 +3021,10 @@ ${RED}󰈆${RESET}  Exit
           send_notification "Sync cancelled"
         fi
         ;;
+      Check\ yt-dlp\ Version)
+        check_ytdlp_version
+        read -r -p "Press Enter to continue..."
+        ;;
       Back)
         break
         ;;
@@ -2986,7 +3032,7 @@ ${RED}󰈆${RESET}  Exit
         byebye
         ;;
       "")
-        # Separator selected, skip
+        break
         ;;
       *)
         echo "Invalid action" >&2
@@ -3310,6 +3356,7 @@ if [ "$WELCOME_SCREEN" = "true" ]; then
   fi
 fi
 core_dep_ch
+check_ytdlp_version
 
 # exports
 export -f generate_sha256 fzf_preview

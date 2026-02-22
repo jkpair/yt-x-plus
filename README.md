@@ -1,23 +1,32 @@
-# yt-x
+# yt-x-plus
 
-![GitHub Issues or Pull Requests](https://img.shields.io/github/issues/Benex254/yt-x)
-![GitHub License](https://img.shields.io/github/license/Benex254/yt-x)
-![GitHub file size in bytes](https://img.shields.io/github/size/Benex254/yt-x/yt-x)
-![GitHub Release](https://img.shields.io/github/v/release/Benex254/yt-x)
-![GitHub commit activity](https://img.shields.io/github/commit-activity/m/Benex254/yt-x)
-
+A fork of [yt-x](https://github.com/Benexl/yt-x) with additional features and improvements.
 
 Browse YouTube from your terminal.
 Plus other sites yt-dlp supports.
 
-[yt-x-github-demo.webm](https://github.com/user-attachments/assets/08e491cc-fc91-4f13-849b-6ce8e78bf6f0)
+[yt-x-plus-demo.webm](https://github.com/jkpair/yt-x-plus/releases/download/assets/demo.webm)
 
-<details>
-<summary>Full Demo</summary>
-  
-[yt-x-full-github-demo.webm](https://github.com/user-attachments/assets/06e388c4-4399-4358-a6cc-68045db48177)
+## What's New in yt-x-plus
 
-</details>
+### Copy Link
+Quickly copy a video's URL to your clipboard for sharing. Available in the video action menu under "Other". Supports `wl-copy` (Wayland), `xclip`, `xsel` (X11), and `pbcopy` (macOS).
+
+### ESC Key Back Navigation
+Pressing ESC in the Settings submenu now returns you to the main menu instead of doing nothing.
+
+### yt-dlp Version Check
+- On startup, yt-x-plus checks if your yt-dlp is up to date and warns you if it's outdated.
+- A "Check yt-dlp Version" option is available in the Settings menu to check on demand.
+- Uses the PyPI API with a 3-second timeout so startup isn't blocked by network issues.
+
+### Safer Feed Refresh
+The "Refresh" action in Your Feed no longer overwrites your current feed if the fetch fails (e.g. due to cookie locking from an open browser). You'll see a notification and keep your existing feed instead of a blank screen.
+
+### Faster Feed Refresh
+Feed refresh now limits the fetch to one page of results instead of downloading the entire feed, making it significantly faster.
+
+---
 
 ## Features
 
@@ -34,84 +43,29 @@ Plus other sites yt-dlp supports.
 - **Download Management**: Download videos, audio, and playlists using `yt-dlp`.
 - **History & Recents**: Track your recent videos and search history.
 - **Configuration Management**: Customize and manage configurations for yt-x, mpv and yt-dlp with ease.
-- **Extensions:** Extend yt-x with your own custom ui and preview logic allowing more precise coverage of other sites that yt-dlp supports🥳
+- **Extensions:** Extend yt-x with your own custom ui and preview logic allowing more precise coverage of other sites that yt-dlp supports
 - **Custom Commands:** Basically a simple way to achieve the same thing with extensions. A custom command is just a yt-dlp command that loads a playlist or playlist like json.
 - **Miscellaneous Features**:
   - Shell completions for `bash`, `zsh`, and `fish`.
   - Desktop entry generation for easy access.
 
-## 📥 Installation
+## Installation
 
-![Linux/BSD](https://img.shields.io/badge/-Linux/BSD-red.svg?style=for-the-badge&logo=linux) <a href="#arch-linux" target="_blank"> <img src="https://img.shields.io/badge/-Arch_Linux-black.svg?style=for-the-badge&logo=archlinux" alt="Arch Linux"> </a> ![MacOS](https://img.shields.io/badge/-MacOS-lightblue.svg?style=for-the-badge&logo=apple) ![Android](https://img.shields.io/badge/-Android-green.svg?style=for-the-badge&logo=android)
-
-### ❄️ NixOS or Home Manager
-
-### <samp>On NixOS, you can install packages using two main methods:</samp>
-
-1. **Imperative/Direct installation**:
-```bash
-nix profile install github:Benexl/yt-x
-```
-#
-2. **Declarative/Config-based**:
-
-    2.1 Add the following to your `flake.nix`:
-
-    ```nix
-    inputs = {
-      nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-      yt-x = {
-        url = "github:Benexl/yt-x";
-        inputs.nixpkgs.follows = "nixpkgs";
-      };
-      ...
-    }
-    ```
-
-    2.2 Then, add Yt-x to your packages:
-    > For system wide installation in *configuration.nix*
-    ```nix
-    environment.systemPackages = with pkgs; [
-      inputs.yt-x.packages."${system}".default
-    ];
-    ```
-
-    > For user level installation in *home.nix*
-    ```nix
-    home.packages = with pkgs; [
-      inputs.yt-x.packages."${system}".default
-    ];
-    ```
-
-### Arch Linux
-
-![AUR Version](https://img.shields.io/aur/version/yt-x-git?style=for-the-badge&color=e64553&logo=arch-linux&label=%5BAUR%5D%20yt-x-git&logocolor=85e185&labelColor=000000)
-
-**You can install [`yt-x`](https://aur.archlinux.org/packages/yt-x-git) from the Arch Linux [AUR](https://aur.archlinux.org/) repository.**
-
-**To install, use your preferred package manager [`paru`](https://aur.archlinux.org/packages/paru-bin) or [`yay`](https://aur.archlinux.org/packages/yay-bin):**
+### From this fork
 
 ```bash
-# for paru users
-paru -S yt-x-git
+# Clone and run directly
+git clone https://github.com/jkpair/yt-x-plus.git
+cd yt-x-plus
+./yt-x
 
-# for yay users
-yay -S yt-x-git
+# Or copy to your PATH
+cp yt-x ~/.local/bin/yt-x
 ```
 
-### Cross-platform
+### From upstream (original yt-x)
 
-
-```bash
-# NOTE: ~/.local/bin should exist and be in path for this to work
-curl -sL "https://raw.githubusercontent.com/Benexl/yt-x/refs/heads/master/yt-x" -o ~/.local/bin/yt-x && chmod +x ~/.local/bin/yt-x
-```
-
-To uninstall simply remove the file: 
-```bash
-rm ~/.local/bin/yt-x
-```
-
+See the [upstream repository](https://github.com/Benexl/yt-x) for NixOS, AUR, and other installation methods.
 
 ## Dependencies
 
@@ -130,6 +84,10 @@ rm ~/.local/bin/yt-x
 
 - [gum](https://github.com/charmbracelet/gum) - Enhanced UI (highly recommended).
 - [rofi](https://github.com/davatorium/rofi) - Alternate UI.
+- **clipboard tool** (for Copy Link):
+  - [wl-clipboard](https://github.com/bugaevc/wl-clipboard) - Wayland (recommended for Wayland sessions)
+  - [xclip](https://github.com/astrand/xclip) - X11
+  - [xsel](https://github.com/kfish/xsel) - X11
 - **terminal image viewer:**
   - [chafa](https://github.com/hpjansson/chafa) - Cross-terminal image rendering (recommended).
   - [icat](https://sw.kovidgoyal.net/kitty/kittens/icat/) - recommended for kitty terminal and ghostty
@@ -138,7 +96,7 @@ rm ~/.local/bin/yt-x
   - [kitty](https://sw.kovidgoyal.net/kitty/) - currently has the best image rendering capabilities (recommended)
   - [wezterm](https://wezfurlong.org/wezterm/index.html)
   - [ghostty](https://github.com/ghostty-org/ghostty)
-   
+
 ---
 
 ## Usage
@@ -319,7 +277,7 @@ export YT_X_FZF_OPTS=$FZF_DEFAULT_OPTS'
 | `:4k`          | 4K videos                                  |
 | `:hdr`         | HDR videos                                 |
 | `:subtitles`   | Videos with subtitles/CC                   |
-| `:360`         | 360° videos                                |
+| `:360`         | 360 videos                                 |
 | `:vr`          | VR180 videos                               |
 | `:3d`          | 3D videos                                  |
 | `:local`       | Videos filtered by location                |
@@ -331,21 +289,16 @@ export YT_X_FZF_OPTS=$FZF_DEFAULT_OPTS'
 | `:rating`      | Sort results by rating                     |
 | `:newest`      | Sort results by upload date                |
 
-## Contribution
+## Credits
 
-Pull requests are highly welcome!
+Based on [yt-x](https://github.com/Benexl/yt-x) by [Benexl](https://github.com/Benexl).
 
 ## Support
 
-Need help? Join the community on Discord:
+Need help with the upstream project? Join the community on Discord:
 
 <p align="center">
 <a href="https://discord.gg/HBEmAwvbHV">
 <img src="https://invidget.switchblade.xyz/C4rhMA4mmK">
 </a>
 </p>
-
-## Supporting the Project
-
-Give the project a star and consider contributing to the codebase.
-
