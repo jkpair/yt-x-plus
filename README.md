@@ -4,6 +4,7 @@ A fork of [yt-x](https://github.com/Benexl/yt-x) with additional features and im
 
 Browse YouTube from your terminal.
 Plus other sites yt-dlp supports.
+
 [yt-x-plus-demo.webm](https://github.com/user-attachments/assets/027057fa-7c11-4361-a9b9-6a8d3bcd9776)
 
 ## What's New in yt-x-plus
