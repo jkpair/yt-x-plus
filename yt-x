@@ -683,6 +683,114 @@ kill_bg_feed_extend() {
   fi
 }
 
+# --- Live feed auto-update functions ---
+# Build complete fzf input (numbered titles + nav options) from a feed data file
+build_homepage_fzf_input() {
+  local data_file="$1"
+  local output_file="$2"
+  local no_more_flag="$3"
+  local data
+  data=$(cat "$data_file" 2>/dev/null) || return 1
+  local titles
+  titles=$(echo "$data" | jq '
+    .entries
+    | to_entries
+    | map("\(.key+1|tostring| if (.|length) < 2 then "0" + . else . end) " + .value.title)
+    | .[]
+  ' -r 2>/dev/null)
+  local nav=""
+  if [ "$no_more_flag" != "1" ]; then
+    if is_bg_feed_extend_running; then
+      nav="Load More (fetching...)"
+    else
+      nav="Load More"
+    fi
+  fi
+  {
+    echo "$titles"
+    [ -n "$nav" ] && echo "$nav"
+    if [ "$ENABLE_PREVIEW" = "true" ]; then
+      echo -e "${CYAN}󰌍${RESET}  Back"
+      echo -e "${CYAN}󰍜${RESET}  Main Menu"
+      echo -e "${RED}󰈆${RESET}  Exit"
+    else
+      printf "Back\nMain Menu\nExit\n"
+    fi
+  } > "$output_file"
+}
+
+# Start background process that checks for feed extend results and reloads fzf
+start_feed_live_updater() {
+  local data_file="$1"
+  local titles_file="$2"
+  local fzf_port="$3"
+  local url="$4"
+  local no_more_file="$5"
+  (
+    while [ -f "$CLI_CACHE_DIR/feed_live_updater.pid" ]; do
+      sleep 3
+      local bg_result
+      if bg_result=$(check_bg_feed_extend_result 2>/dev/null); then
+        [ -n "$YT_X_DEBUG" ] && echo "[DEBUG] Live updater: extend completed, merging" >&2
+        local current_data old_count
+        current_data=$(read_file_locked "$data_file") || continue
+        old_count=$(echo "$current_data" | jq '.entries | length')
+        local merged new_count
+        merged=$(merge_feed_entries "$current_data" "$bg_result")
+        new_count=$(echo "$merged" | jq '.entries | length')
+        rm -f "$CLI_CACHE_DIR/feed_bg_extend_result.json" "$CLI_CACHE_DIR/feed_bg_extend.pid"
+        if [ "$new_count" -le "$old_count" ]; then
+          echo "1" > "$no_more_file"
+          [ -n "$YT_X_DEBUG" ] && echo "[DEBUG] Live updater: no new entries" >&2
+          build_homepage_fzf_input "$data_file" "$titles_file" "1"
+          curl -s "localhost:$fzf_port" -d "reload(cat $titles_file)" 2>/dev/null
+        else
+          write_file_locked "$merged" "$data_file"
+          save_feed_cache "$merged"
+          # Generate text previews for new entries (background)
+          local new_entries_json
+          new_entries_json=$(echo "$merged" | jq --argjson start "$old_count" '
+            .entries = (.entries[$start:]
+            | to_entries
+            | map(.value.title="\(.key+1+$start|tostring| if (.|length) < 2 then "0" + . else . end) "+.value.title)
+            | map(.value))
+          ')
+          search_results="$new_entries_json"
+          generate_text_preview "$new_entries_json" 2>/dev/null &
+          # Download preview images for new entries (background)
+          if [ "$ENABLE_PREVIEW" = "true" ] && [ "$PREFERRED_SELECTOR" = "fzf" ]; then
+            local new_raw_json
+            new_raw_json=$(echo "$merged" | jq --argjson start "$old_count" '.entries = .entries[$start:]')
+            download_preview_images "$new_raw_json" 2>/dev/null &
+          fi
+          # Rebuild fzf input and reload
+          build_homepage_fzf_input "$data_file" "$titles_file" "$(cat "$no_more_file" 2>/dev/null)"
+          curl -s "localhost:$fzf_port" -d "reload(cat $titles_file)" 2>/dev/null
+          [ -n "$YT_X_DEBUG" ] && echo "[DEBUG] Live updater: reloaded fzf ($old_count -> $new_count)" >&2
+          # Start next extend fetch
+          local next_count=$((new_count + NO_OF_SEARCH_RESULTS))
+          start_bg_feed_extend "$url" "$next_count"
+        fi
+      fi
+    done
+  ) &
+  echo "$!" > "$CLI_CACHE_DIR/feed_live_updater.pid"
+  disown
+}
+
+stop_feed_live_updater() {
+  local pid_file="$CLI_CACHE_DIR/feed_live_updater.pid"
+  if [ -f "$pid_file" ]; then
+    local pid
+    pid=$(cat "$pid_file" 2>/dev/null)
+    rm -f "$pid_file"  # Remove first so the updater loop exits
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+    fi
+  fi
+}
+
 # Wrapper for mpv that detects YouTube bot detection errors and offers recovery
 # Usage: play_with_mpv [mpv_args...]
 # All args are passed directly to mpv. On bot detection, retries with updated MPV_YTDL_OPTS.
@@ -1506,8 +1614,10 @@ cleanup() {
   # Kill any background feed fetch
   kill_bg_feed_fetch
   kill_bg_feed_extend
+  stop_feed_live_updater
   rm -f "$CLI_CACHE_DIR/feed_bg_result.json" 2>/dev/null
   rm -f "$CLI_CACHE_DIR/feed_bg_extend_result.json" 2>/dev/null
+  rm -f "$CLI_CACHE_DIR/feed_live_data.json" "$CLI_CACHE_DIR/feed_live_titles.txt" "$CLI_CACHE_DIR/feed_live_no_more" 2>/dev/null
 
   # Remove any lock files we created
   rm -f "$CLI_CONFIG_DIR"/*.lock 2>/dev/null
@@ -2568,24 +2678,90 @@ playlist_explorer() {
     titles=$(echo "$search_results" | jq '.entries[].title' -r 2>/dev/null)
     [ "$ENABLE_PREVIEW" = "true" ] && [ "$PREFERRED_SELECTOR" = "fzf" ] && [ "$DOWNLOAD_IMAGES" = 0 ] && download_preview_images "$search_results" && DOWNLOAD_IMAGES=1
     export search_results SHELL
-    local nav_options
-    if [ "$is_homepage" = 1 ]; then
-      if [ "$feed_no_more" = 1 ]; then
-        nav_options=""
-      elif is_bg_feed_extend_running; then
-        nav_options="Load More (fetching...)"
-      elif [ -f "$CLI_CACHE_DIR/feed_bg_extend_result.json" ]; then
-        nav_options="Load More (ready)"
+    if [ "$is_homepage" = 1 ] && [ "$PREFERRED_SELECTOR" = "fzf" ]; then
+      # Homepage with fzf: use --listen for live auto-updates
+      local _live_data_file="$CLI_CACHE_DIR/feed_live_data.json"
+      local _live_titles_file="$CLI_CACHE_DIR/feed_live_titles.txt"
+      local _live_no_more_file="$CLI_CACHE_DIR/feed_live_no_more"
+      local _fzf_listen_port=$((RANDOM % 10000 + 40000))
+      write_file_locked "$feed_all_results" "$_live_data_file"
+      [ "$feed_no_more" = 1 ] && echo "1" > "$_live_no_more_file" || rm -f "$_live_no_more_file"
+      build_homepage_fzf_input "$_live_data_file" "$_live_titles_file" "$feed_no_more"
+      start_feed_live_updater "$_live_data_file" "$_live_titles_file" "$_fzf_listen_port" "$url" "$_live_no_more_file"
+      local _fzf_out
+      if [ "$ENABLE_PREVIEW" = "true" ]; then
+        _fzf_out=$(cat "$_live_titles_file" | fzf \
+          --listen "$_fzf_listen_port" \
+          --info=hidden --layout=reverse --height=100% \
+          --prompt="select video: " \
+          --header-first --header="$CLI_HEADER" \
+          --preview-window=left,35%,wrap \
+          --bind='right:accept,resize:refresh-preview,ctrl-r:refresh-preview' \
+          --expect=shift-left,shift-right --tabstop=1 \
+          --cycle --exact --ansi \
+          --preview="$PREVIEW_SCRIPT_FOR_VIDEOS")
       else
-        nav_options="Load More"
+        _fzf_out=$(cat "$_live_titles_file" | fzf \
+          --listen "$_fzf_listen_port" \
+          --info=hidden --layout=reverse --height=100% \
+          --prompt="select video: " \
+          --header-first --header="$CLI_HEADER" \
+          --exact --cycle --ansi)
+      fi
+      stop_feed_live_updater
+      # Read back updated data from live updater
+      if [ -f "$_live_data_file" ]; then
+        local _updated_data
+        _updated_data=$(read_file_locked "$_live_data_file" 2>/dev/null)
+        if [ -n "$_updated_data" ]; then
+          feed_all_results="$_updated_data"
+          # Re-number search_results so video lookup works for all entries
+          search_results=$(echo "$feed_all_results" | jq '
+            .entries=(.entries
+            | to_entries
+            | map(.value.title="\(.key+1|tostring| if (.|length) < 2 then "0" + . else . end) "+.value.title)
+            |map(.value))
+          ')
+          export search_results
+        fi
+      fi
+      [ -f "$_live_no_more_file" ] && feed_no_more=1
+      rm -f "$_live_data_file" "$_live_titles_file" "$_live_no_more_file"
+      DOWNLOAD_IMAGES=0
+      # Process fzf --expect output (key on line 1, selection on line 2+)
+      if [ "$ENABLE_PREVIEW" = "true" ]; then
+        local _key_line _selected_line
+        _key_line=$(echo "$_fzf_out" | head -n1)
+        _selected_line=$(echo "$_fzf_out" | tail -n +2)
+        if echo "$_selected_line" | grep -qF '┈'; then
+          title="$(echo "$_key_line" | tr -d '\n' | sed 's/^[^0-9]  //g')"
+        else
+          title="$(echo "$_fzf_out" | tr -d '\n' | sed 's/^[^0-9]  //g')"
+        fi
+      else
+        title="$(echo "$_fzf_out" | tr -d '\n' | sed 's/^[^0-9]  //g')"
       fi
     else
-      nav_options="Next\nPrevious"
-    fi
-    if [ "$ENABLE_PREVIEW" = "true" ]; then
-      title="$(printf "%s\n${nav_options}\n${CYAN}󰌍${RESET}  Back\n${CYAN}󰍜${RESET}  Main Menu\n${RED}󰈆${RESET}  Exit" "$titles" | launcher_with_preview "select video" "$PREVIEW_SCRIPT_FOR_VIDEOS" | tr -d '\n' | sed 's/^[^0-9]  //g')"
-    else
-      title="$(printf "%s\n${nav_options}\nBack\nMain Menu\nExit" "$titles" | launcher "select video" | tr -d '\n' | sed 's/^[^0-9]  //g')"
+      # Non-homepage or rofi: use standard launcher
+      local nav_options
+      if [ "$is_homepage" = 1 ]; then
+        if [ "$feed_no_more" = 1 ]; then
+          nav_options=""
+        elif is_bg_feed_extend_running; then
+          nav_options="Load More (fetching...)"
+        elif [ -f "$CLI_CACHE_DIR/feed_bg_extend_result.json" ]; then
+          nav_options="Load More (ready)"
+        else
+          nav_options="Load More"
+        fi
+      else
+        nav_options="Next\nPrevious"
+      fi
+      if [ "$ENABLE_PREVIEW" = "true" ]; then
+        title="$(printf "%s\n${nav_options}\n${CYAN}󰌍${RESET}  Back\n${CYAN}󰍜${RESET}  Main Menu\n${RED}󰈆${RESET}  Exit" "$titles" | launcher_with_preview "select video" "$PREVIEW_SCRIPT_FOR_VIDEOS" | tr -d '\n' | sed 's/^[^0-9]  //g')"
+      else
+        title="$(printf "%s\n${nav_options}\nBack\nMain Menu\nExit" "$titles" | launcher "select video" | tr -d '\n' | sed 's/^[^0-9]  //g')"
+      fi
     fi
     clear
     title="$(echo "$title" | sed 's/"/\\"/g')"
