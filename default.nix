@@ -33,6 +33,12 @@ stdenvNoCC.mkDerivation {
     wrapProgram $out/bin/yt-x \
       --prefix PATH : ${lib.makeBinPath deps}
 
+    # Install built-in themes
+    if [ -d themes ]; then
+      mkdir -p $out/share/yt-x/themes
+      cp themes/*.theme $out/share/yt-x/themes/
+    fi
+
     runHook postInstall
   '';
 
