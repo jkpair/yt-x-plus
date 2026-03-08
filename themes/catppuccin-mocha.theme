@@ -1,0 +1,81 @@
+# yt-x Theme: Catppuccin Mocha
+# A soothing pastel theme with warm colors
+# https://github.com/catppuccin/catppuccin
+
+# Theme metadata
+THEME_NAME="Catppuccin Mocha"
+THEME_AUTHOR="Catppuccin, yt-x adaptation"
+THEME_VERSION="1.0"
+
+# =============================================================================
+# TERMINAL COLORS (256-color palette)
+# =============================================================================
+
+# Primary colors
+COLOR_RED='\033[38;5;210m'        # #f38ba8 (red)
+COLOR_GREEN='\033[38;5;120m'      # #a6e3a1 (green)
+COLOR_YELLOW='\033[38;5;223m'     # #f9e2af (yellow)
+COLOR_BLUE='\033[38;5;117m'       # #89b4fa (blue)
+COLOR_MAGENTA='\033[38;5;183m'    # #cba6f7 (mauve)
+COLOR_CYAN='\033[38;5;123m'       # #94e2d5 (teal)
+COLOR_ORANGE='\033[38;5;216m'     # #fab387 (peach)
+
+# Neutral colors
+COLOR_GRAY='\033[38;5;103m'       # #6c7086 (overlay0)
+COLOR_WHITE='\033[38;5;255m'      # #cdd6f4 (text)
+COLOR_DIM='\033[38;5;245m'
+
+# Text styles
+STYLE_BOLD='\033[1m'
+STYLE_DIM='\033[2m'
+STYLE_ITALIC='\033[3m'
+STYLE_RESET='\033[0m'
+
+# =============================================================================
+# FZF THEME
+# =============================================================================
+
+FZF_COLORS='
+  --color=fg:#cdd6f4,fg+:#cdd6f4,bg:#1e1e2e,bg+:#313244
+  --color=hl:#f38ba8,hl+:#f38ba8,info:#a6e3a1,marker:#a6e3a1
+  --color=prompt:#f38ba8,spinner:#cba6f7,pointer:#cba6f7,header:#89b4fa
+  --color=border:#45475a,label:#cdd6f4,query:#cdd6f4
+  --color=gutter:#1e1e2e,scrollbar:#45475a
+'
+
+FZF_STYLE='
+  --border="rounded" --border-label="" --preview-window="border-rounded"
+  --prompt="  " --marker=" " --pointer="▌"
+  --separator="─" --scrollbar="▐"  --padding="0,1" --margin="0"
+'
+
+# =============================================================================
+# UI ELEMENTS
+# =============================================================================
+
+BOX_TOP_LEFT="╭"
+BOX_TOP_RIGHT="╮"
+BOX_BOTTOM_LEFT="╰"
+BOX_BOTTOM_RIGHT="╯"
+BOX_HORIZONTAL="─"
+BOX_VERTICAL="│"
+BOX_SEPARATOR="┈"
+
+ICON_HOME="󰋜"
+ICON_SEARCH=""
+ICON_PLAYLIST="󰐑"
+ICON_WATCH_LATER=""
+ICON_LIKED=""
+ICON_SAVED=""
+ICON_HISTORY=""
+ICON_RECENT=""
+ICON_SUBSCRIPTION="󰵀"
+ICON_CHANNEL="󰑈"
+ICON_CUSTOM=""
+ICON_CLIPS=""
+ICON_SETTINGS=""
+ICON_CONFIG=""
+ICON_EXIT="󰈆"
+ICON_PLAY=""
+ICON_DOWNLOAD=""
+ICON_AUDIO=""

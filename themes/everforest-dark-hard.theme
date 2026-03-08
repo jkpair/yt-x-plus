@@ -1,0 +1,87 @@
+# yt-x Theme: Everforest Dark Hard
+# A comfortable and pleasant color scheme based on Everforest
+# https://github.com/sainnhe/everforest
+
+# Theme metadata
+THEME_NAME="Everforest Dark Hard"
+THEME_AUTHOR="Sainnhe Park (Everforest), yt-x adaptation"
+THEME_VERSION="1.0"
+
+# =============================================================================
+# TERMINAL COLORS (256-color palette)
+# =============================================================================
+# These colors are used throughout the TUI for text and icons.
+# Format: ANSI 256-color escape codes
+
+# Primary colors
+COLOR_RED='\033[38;5;167m'        # #e67e80 - Errors, exit, warnings
+COLOR_GREEN='\033[38;5;142m'      # #a7c080 - Success, confirmations
+COLOR_YELLOW='\033[38;5;179m'     # #dbbc7f - Highlights, attention
+COLOR_BLUE='\033[38;5;109m'       # #7fbbb3 - Info, links
+COLOR_MAGENTA='\033[38;5;175m'    # #d699b6 - Special highlights
+COLOR_CYAN='\033[38;5;108m'       # #83c092 - Primary actions, accents
+COLOR_ORANGE='\033[38;5;173m'     # #e69875 - Custom items, special
+
+# Neutral colors
+COLOR_GRAY='\033[38;5;102m'       # #7a8478 - Separators, dim text
+COLOR_WHITE='\033[38;5;223m'      # #d3c6aa - Primary foreground
+COLOR_DIM='\033[38;5;245m'        # Dimmed text
+
+# Text styles
+STYLE_BOLD='\033[1m'
+STYLE_DIM='\033[2m'
+STYLE_ITALIC='\033[3m'
+STYLE_RESET='\033[0m'
+
+# =============================================================================
+# FZF THEME
+# =============================================================================
+# These options control the appearance of the fzf selector.
+# See: https://github.com/junegunn/fzf/wiki/Color-schemes
+
+FZF_COLORS='
+  --color=fg:#d3c6aa,fg+:#d3c6aa,bg:#272e33,bg+:#3c4841
+  --color=hl:#a7c080,hl+:#a7c080,info:#83c092,marker:#a7c080
+  --color=prompt:#e67e80,spinner:#d699b6,pointer:#d699b6,header:#7fbbb3
+  --color=border:#4f5b58,label:#d3c6aa,query:#d3c6aa
+  --color=gutter:#272e33,scrollbar:#4f5b58
+'
+
+FZF_STYLE='
+  --border="rounded" --border-label="" --preview-window="border-rounded"
+  --prompt="  " --marker=" " --pointer="▌"
+  --separator="─" --scrollbar="▐"  --padding="0,1" --margin="0"
+'
+
+# =============================================================================
+# UI ELEMENTS
+# =============================================================================
+# Box drawing characters and decorations
+
+BOX_TOP_LEFT="╭"
+BOX_TOP_RIGHT="╮"
+BOX_BOTTOM_LEFT="╰"
+BOX_BOTTOM_RIGHT="╯"
+BOX_HORIZONTAL="─"
+BOX_VERTICAL="│"
+BOX_SEPARATOR="┈"
+
+# Icons (Nerd Font required)
+ICON_HOME="󰋜"
+ICON_SEARCH=""
+ICON_PLAYLIST="󰐑"
+ICON_WATCH_LATER=""
+ICON_LIKED=""
+ICON_SAVED=""
+ICON_HISTORY=""
+ICON_RECENT=""
+ICON_SUBSCRIPTION="󰵀"
+ICON_CHANNEL="󰑈"
+ICON_CUSTOM=""
+ICON_CLIPS=""
+ICON_SETTINGS=""
+ICON_CONFIG=""
+ICON_EXIT="󰈆"
+ICON_PLAY=""
+ICON_DOWNLOAD=""
+ICON_AUDIO=""

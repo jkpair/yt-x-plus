@@ -1,0 +1,81 @@
+# yt-x Theme: Gruvbox Dark
+# A retro groove color scheme
+# https://github.com/morhetz/gruvbox
+
+# Theme metadata
+THEME_NAME="Gruvbox Dark"
+THEME_AUTHOR="morhetz (Gruvbox), yt-x adaptation"
+THEME_VERSION="1.0"
+
+# =============================================================================
+# TERMINAL COLORS (256-color palette)
+# =============================================================================
+
+# Primary colors
+COLOR_RED='\033[38;5;167m'        # #fb4934 (red)
+COLOR_GREEN='\033[38;5;142m'      # #b8bb26 (green)
+COLOR_YELLOW='\033[38;5;214m'     # #fabd2f (yellow)
+COLOR_BLUE='\033[38;5;109m'       # #83a598 (blue)
+COLOR_MAGENTA='\033[38;5;175m'    # #d3869b (purple)
+COLOR_CYAN='\033[38;5;108m'       # #8ec07c (aqua)
+COLOR_ORANGE='\033[38;5;208m'     # #fe8019 (orange)
+
+# Neutral colors
+COLOR_GRAY='\033[38;5;245m'       # #928374 (gray)
+COLOR_WHITE='\033[38;5;223m'      # #ebdbb2 (fg)
+COLOR_DIM='\033[38;5;239m'
+
+# Text styles
+STYLE_BOLD='\033[1m'
+STYLE_DIM='\033[2m'
+STYLE_ITALIC='\033[3m'
+STYLE_RESET='\033[0m'
+
+# =============================================================================
+# FZF THEME
+# =============================================================================
+
+FZF_COLORS='
+  --color=fg:#ebdbb2,fg+:#ebdbb2,bg:#282828,bg+:#3c3836
+  --color=hl:#fe8019,hl+:#fe8019,info:#b8bb26,marker:#b8bb26
+  --color=prompt:#fb4934,spinner:#d3869b,pointer:#d3869b,header:#83a598
+  --color=border:#504945,label:#ebdbb2,query:#ebdbb2
+  --color=gutter:#282828,scrollbar:#504945
+'
+
+FZF_STYLE='
+  --border="rounded" --border-label="" --preview-window="border-rounded"
+  --prompt="  " --marker=" " --pointer="▌"
+  --separator="─" --scrollbar="▐"  --padding="0,1" --margin="0"
+'
+
+# =============================================================================
+# UI ELEMENTS
+# =============================================================================
+
+BOX_TOP_LEFT="╭"
+BOX_TOP_RIGHT="╮"
+BOX_BOTTOM_LEFT="╰"
+BOX_BOTTOM_RIGHT="╯"
+BOX_HORIZONTAL="─"
+BOX_VERTICAL="│"
+BOX_SEPARATOR="┈"
+
+ICON_HOME="󰋜"
+ICON_SEARCH=""
+ICON_PLAYLIST="󰐑"
+ICON_WATCH_LATER=""
+ICON_LIKED=""
+ICON_SAVED=""
+ICON_HISTORY=""
+ICON_RECENT=""
+ICON_SUBSCRIPTION="󰵀"
+ICON_CHANNEL="󰑈"
+ICON_CUSTOM=""
+ICON_CLIPS=""
+ICON_SETTINGS=""
+ICON_CONFIG=""
+ICON_EXIT="󰈆"
+ICON_PLAY=""
+ICON_DOWNLOAD=""
+ICON_AUDIO=""

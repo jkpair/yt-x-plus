@@ -1,0 +1,81 @@
+# yt-x Theme: Tokyo Night
+# A dark and vibrant theme inspired by Tokyo Night
+# https://github.com/folke/tokyonight.nvim
+
+# Theme metadata
+THEME_NAME="Tokyo Night"
+THEME_AUTHOR="folke (Tokyo Night), yt-x adaptation"
+THEME_VERSION="1.0"
+
+# =============================================================================
+# TERMINAL COLORS (256-color palette)
+# =============================================================================
+
+# Primary colors
+COLOR_RED='\033[38;5;203m'        # #f7768e
+COLOR_GREEN='\033[38;5;114m'      # #9ece6a
+COLOR_YELLOW='\033[38;5;221m'     # #e0af68
+COLOR_BLUE='\033[38;5;75m'        # #7aa2f7
+COLOR_MAGENTA='\033[38;5;176m'    # #bb9af7
+COLOR_CYAN='\033[38;5;81m'        # #7dcfff
+COLOR_ORANGE='\033[38;5;208m'     # #ff9e64
+
+# Neutral colors
+COLOR_GRAY='\033[38;5;60m'        # #3b4261
+COLOR_WHITE='\033[38;5;189m'      # #c0caf5
+COLOR_DIM='\033[38;5;245m'
+
+# Text styles
+STYLE_BOLD='\033[1m'
+STYLE_DIM='\033[2m'
+STYLE_ITALIC='\033[3m'
+STYLE_RESET='\033[0m'
+
+# =============================================================================
+# FZF THEME
+# =============================================================================
+
+FZF_COLORS='
+  --color=fg:#c0caf5,fg+:#c0caf5,bg:#1a1b26,bg+:#292e42
+  --color=hl:#7aa2f7,hl+:#7dcfff,info:#9ece6a,marker:#9ece6a
+  --color=prompt:#f7768e,spinner:#bb9af7,pointer:#bb9af7,header:#7aa2f7
+  --color=border:#3b4261,label:#a9b1d6,query:#c0caf5
+  --color=gutter:#1a1b26,scrollbar:#3b4261
+'
+
+FZF_STYLE='
+  --border="rounded" --border-label="" --preview-window="border-rounded"
+  --prompt="  " --marker=" " --pointer="▌"
+  --separator="─" --scrollbar="▐"  --padding="0,1" --margin="0"
+'
+
+# =============================================================================
+# UI ELEMENTS
+# =============================================================================
+
+BOX_TOP_LEFT="╭"
+BOX_TOP_RIGHT="╮"
+BOX_BOTTOM_LEFT="╰"
+BOX_BOTTOM_RIGHT="╯"
+BOX_HORIZONTAL="─"
+BOX_VERTICAL="│"
+BOX_SEPARATOR="┈"
+
+ICON_HOME="󰋜"
+ICON_SEARCH=""
+ICON_PLAYLIST="󰐑"
+ICON_WATCH_LATER=""
+ICON_LIKED=""
+ICON_SAVED=""
+ICON_HISTORY=""
+ICON_RECENT=""
+ICON_SUBSCRIPTION="󰵀"
+ICON_CHANNEL="󰑈"
+ICON_CUSTOM=""
+ICON_CLIPS=""
+ICON_SETTINGS=""
+ICON_CONFIG=""
+ICON_EXIT="󰈆"
+ICON_PLAY=""
+ICON_DOWNLOAD=""
+ICON_AUDIO=""
