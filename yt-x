@@ -631,11 +631,12 @@ merge_feed_entries() {
 
 start_bg_feed_extend() {
   local url="$1"
+  local fetch_count="${2:-$((NO_OF_SEARCH_RESULTS * 2))}"
   is_bg_feed_extend_running && return
-  [ -n "$YT_X_DEBUG" ] && echo "[DEBUG] Starting background feed extend fetch" >&2
+  [ -n "$YT_X_DEBUG" ] && echo "[DEBUG] Starting background feed extend fetch (count=$fetch_count)" >&2
   (
     local result
-    result=$(yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER_OPTS[@]}" 2>/dev/null)
+    result=$(yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date --playlist-end "$fetch_count" "${PREFERRED_BROWSER_OPTS[@]}" 2>/dev/null)
     if echo "$result" | jq -e '.entries' >/dev/null 2>&1; then
       write_file_locked "$result" "$CLI_CACHE_DIR/feed_bg_extend_result.json"
     fi
@@ -2616,8 +2617,10 @@ playlist_explorer() {
       else
         # No bg result available, do synchronous fetch
         echo "Fetching more content..." >&2
+        local sync_fetch_count
+        sync_fetch_count=$(( $(echo "$feed_all_results" | jq '.entries | length') + NO_OF_SEARCH_RESULTS ))
         local sync_result
-        sync_result=$(yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER_OPTS[@]}" 2>/dev/null)
+        sync_result=$(yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date --playlist-end "$sync_fetch_count" "${PREFERRED_BROWSER_OPTS[@]}" 2>/dev/null)
         if echo "$sync_result" | jq -e '.entries' >/dev/null 2>&1; then
           local old_count
           old_count=$(echo "$feed_all_results" | jq '.entries | length')
@@ -2637,7 +2640,9 @@ playlist_explorer() {
       fi
       # Start next bg extend for the next "Load More"
       if [ "$feed_no_more" != 1 ]; then
-        start_bg_feed_extend "$url"
+        local next_fetch_count
+        next_fetch_count=$(( $(echo "$feed_all_results" | jq '.entries | length') + NO_OF_SEARCH_RESULTS ))
+        start_bg_feed_extend "$url" "$next_fetch_count"
       fi
       continue
       ;;
@@ -2727,7 +2732,9 @@ playlist_explorer() {
     esac
     # Auto-start background extend fetch for homepage when user selects a video
     if [ "$is_homepage" = 1 ] && [ "$feed_no_more" != 1 ] && ! is_bg_feed_extend_running && [ ! -f "$CLI_CACHE_DIR/feed_bg_extend_result.json" ]; then
-      start_bg_feed_extend "$url"
+      local auto_fetch_count
+      auto_fetch_count=$(( $(echo "$feed_all_results" | jq '.entries | length') + NO_OF_SEARCH_RESULTS ))
+      start_bg_feed_extend "$url" "$auto_fetch_count"
     fi
     id=$(echo "$title" | sed -E 's/^([0-9]+) .*/\1/g')
     # Strip leading zeros to avoid octal interpretation (08, 09 would fail)
