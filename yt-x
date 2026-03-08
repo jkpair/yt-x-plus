@@ -3330,6 +3330,7 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Action" "main_menu_desc" | sed 's/.
       ":month") sp="EgIIBA%253D%253D" ;;
       ":year") sp="EgIIBQ%253D%253D" ;;
       ":video") sp="EgIQAQ%253D%253D" ;;
+      ":playlist") sp="EgIQAw%253D%253D" ;;
       ":movie") sp="EgIQBA%253D%253D" ;;
       ":live") sp="EgJAAQ%253D%253D" ;;
       ":short") sp="EgQQARgB" ;;
@@ -3849,12 +3850,113 @@ complete -c $CLI_NAME --no-files --short-option f --long-option fish --descripti
     "
       ;;
     -b | --bash)
-      # TODO: write bash completions
-      echo Contribute to $CLI_NAME by writing bash completions
+      cat <<'BASH_COMPLETIONS'
+_yt_x() {
+  local cur prev words cword
+  _init_completion || return
+
+  if [[ "${words[1]}" == "completions" ]]; then
+    COMPREPLY=($(compgen -W "--fish --bash --zsh --help" -- "$cur"))
+    return
+  fi
+
+  case "$prev" in
+    -p|--player)
+      COMPREPLY=($(compgen -W "mpv vlc" -- "$cur"))
+      return
+      ;;
+    -s|--preferred-selector)
+      COMPREPLY=($(compgen -W "fzf rofi" -- "$cur"))
+      return
+      ;;
+    --rofi-theme)
+      _filedir
+      return
+      ;;
+    --install-self)
+      _filedir -d
+      return
+      ;;
+    -x|--extension)
+      local ext_dir="${XDG_CONFIG_HOME:-$HOME/.config}/yt-x/extensions"
+      if [[ -d "$ext_dir" ]]; then
+        COMPREPLY=($(compgen -W "$(command ls "$ext_dir" 2>/dev/null)" -- "$cur"))
+      fi
+      _filedir
+      return
+      ;;
+    -S|--search|--theme)
+      return
+      ;;
+  esac
+
+  if [[ "$cur" == -* ]]; then
+    COMPREPLY=($(compgen -W "-h --help -v --version -e --edit-config -U --update -S --search -s --preferred-selector --preview --no-preview --theme --list-themes --check-deps --install --install-self --disown-streaming-process --no-disown-streaming-process --disown-downloading-process --no-disown-downloading-process --rofi-theme -p --player -E --generate-desktop-entry -x --extension" -- "$cur"))
+  else
+    COMPREPLY=($(compgen -W "completions" -- "$cur"))
+  fi
+}
+
+complete -F _yt_x yt-x
+BASH_COMPLETIONS
       ;;
     -z | --zsh)
-      # TODO: write zsh completions
-      echo Contribute to $CLI_NAME by writing zsh completions
+      cat <<'ZSH_COMPLETIONS'
+#compdef yt-x
+
+_yt_x_extensions() {
+  local ext_dir="${XDG_CONFIG_HOME:-$HOME/.config}/yt-x/extensions"
+  [[ -d "$ext_dir" ]] && compadd -- "$ext_dir"/*(:t) 2>/dev/null
+}
+
+_yt_x() {
+  local -a commands=(
+    'completions:generate shell completions'
+  )
+
+  _arguments -s \
+    '(-h --help)'{-h,--help}'[show help message and exit]' \
+    '(-v --version)'{-v,--version}'[print version and exit]' \
+    '(-e --edit-config)'{-e,--edit-config}'[edit config file]' \
+    '(-U --update)'{-U,--update}'[update the script]' \
+    '(-S --search)'{-S,--search}'[search for a query]:query: ' \
+    '(-s --preferred-selector)'{-s,--preferred-selector}'[set UI selector]:selector:(fzf rofi)' \
+    '--preview[enable preview window]' \
+    '--no-preview[disable preview window]' \
+    '--theme[set color theme]:theme: ' \
+    '--list-themes[list available themes]' \
+    '--check-deps[check dependencies status]' \
+    '--install[install missing dependencies]' \
+    '--install-self[install yt-x to system]:path:_directories' \
+    '--disown-streaming-process[disown streaming process]' \
+    '--no-disown-streaming-process[do not disown streaming process]' \
+    '--disown-downloading-process[disown downloading process]' \
+    '--no-disown-downloading-process[do not disown downloading process]' \
+    '--rofi-theme[path to rofi config file]:file:_files' \
+    '(-p --player)'{-p,--player}'[set video player]:player:(mpv vlc)' \
+    '(-E --generate-desktop-entry)'{-E,--generate-desktop-entry}'[generate desktop entry]' \
+    '(-x --extension)'{-x,--extension}'[load extension]:extension:_yt_x_extensions' \
+    '1:command:->cmd' && return
+
+  case "$state" in
+    cmd)
+      _describe -t commands 'yt-x commands' commands
+      ;;
+  esac
+
+  case "${words[2]}" in
+    completions)
+      _arguments \
+        '--fish[print fish completions]' \
+        '--bash[print bash completions]' \
+        '--zsh[print zsh completions]' \
+        '(-h --help)'{-h,--help}'[show help]'
+      ;;
+  esac
+}
+
+_yt_x "$@"
+ZSH_COMPLETIONS
       ;;
     -h | --help)
       echo "\

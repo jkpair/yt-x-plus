@@ -263,7 +263,9 @@ export YT_X_FZF_OPTS=$FZF_DEFAULT_OPTS'
 
 | Command        | Description                                |
 |----------------|--------------------------------------------|
+| `:hour`        | Videos uploaded in the last hour           |
 | `:live`        | Show only live streams                     |
+| `:video`       | Show only videos                           |
 | `:today`       | Videos uploaded today                      |
 | `:week`        | Videos uploaded this week                  |
 | `:month`       | Videos uploaded this month                 |
