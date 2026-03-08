@@ -773,7 +773,7 @@ update_script() {
     fi
   fi
 
-  update=$(curl -s "https://raw.githubusercontent.com/Benexl/yt-x/refs/heads/master/yt-x" || byebye 1)
+  update=$(curl -s "https://raw.githubusercontent.com/jkpair/yt-x-plus/refs/heads/master/yt-x" || byebye 1)
   update="$(printf '%s\n' "$update" | diff -u "$yt_x_path" - 2>/dev/null)"
   if [ -z "$update" ]; then
     send_notification "Script is up to date :)"
@@ -788,7 +788,7 @@ update_script() {
 }
 
 check_update() {
-  update=$(curl -s "https://raw.githubusercontent.com/Benexl/yt-x/refs/heads/master/yt-x")
+  update=$(curl -s "https://raw.githubusercontent.com/jkpair/yt-x-plus/refs/heads/master/yt-x")
   update="$(printf '%s\n' "$update" | diff -u "$(command -v yt-x)" - 2>/dev/null)"
   if [ -n "$update" ]; then
     confirm "An update has been found would you like to see the changes before deciding whether to update?" && echo "$update" | less

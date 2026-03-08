@@ -19,7 +19,7 @@ nix develop
 nix build
 
 # Install via Nix
-nix profile install github:Benexl/yt-x
+nix profile install github:jkpair/yt-x-plus
 
 # Debug mode
 YT_X_DEBUG=1 ./yt-x

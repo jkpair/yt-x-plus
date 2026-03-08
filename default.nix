@@ -21,7 +21,7 @@ let
 in
 stdenvNoCC.mkDerivation {
   pname = "yt-x";
-  version = "git";
+  version = "0.5.1";
   src = ./.;
 
   nativeBuildInputs = [ makeWrapper ];

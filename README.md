@@ -62,9 +62,22 @@ cd yt-x-plus
 cp yt-x ~/.local/bin/yt-x
 ```
 
+### Nix
+
+```bash
+# Run without installing
+nix run github:jkpair/yt-x-plus
+
+# Install
+nix profile install github:jkpair/yt-x-plus
+
+# Development shell
+nix develop github:jkpair/yt-x-plus
+```
+
 ### From upstream (original yt-x)
 
-See the [upstream repository](https://github.com/Benexl/yt-x) for NixOS, AUR, and other installation methods.
+See the [upstream repository](https://github.com/Benexl/yt-x) for AUR and other installation methods.
 
 ## Dependencies
 
