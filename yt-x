@@ -2,7 +2,7 @@
 #A script written by Benexl in September 2024 under MIT LICENSE
 
 CLI_NAME="${YT_X_APP_NAME:-yt-x}"
-CLI_VERSION="0.5.2"
+CLI_VERSION="0.6.0"
 
 # ASCII header
 CLI_HEADER='
@@ -110,8 +110,15 @@ PLAYER: $PLAYER
 # this is used by yt-dlp to access content that would require login
 PREFERRED_BROWSER: $PREFERRED_BROWSER
 
+# fallback cookie file path (used if browser cookie extraction fails)
+# export cookies from your browser with a "cookies.txt" extension (Netscape format)
+COOKIE_FILE: $COOKIE_FILE
+
 # the number of results to get from yt-dlp
 NO_OF_SEARCH_RESULTS: $NO_OF_SEARCH_RESULTS
+
+# the number of videos per page on the feed [default: 25]
+FEED_PAGE_SIZE: $FEED_PAGE_SIZE
 
 # the duration notifications stay on the screen
 NOTIFICATION_DURATION: $NOTIFICATION_DURATION
@@ -263,6 +270,7 @@ select_browser() {
     fi
     echo ""
     echo "You can change the browser later with: $CLI_NAME -e"
+    echo -e "\033[33mTip:\033[0m You can also set COOKIE_FILE in the config to a cookies.txt file as a fallback."
     return 1
   fi
 }
@@ -329,15 +337,21 @@ load_config() {
   fi
 
   PREFERRED_BROWSER="$(find_config_option "PREFERRED_BROWSER")"
+  COOKIE_FILE="$(find_config_option "COOKIE_FILE")"
   if [ -n "$PREFERRED_BROWSER" ]; then
     PREFERRED_BROWSER_OPTS=(--cookies-from-browser "$PREFERRED_BROWSER")
     MPV_YTDL_OPTS=(--ytdl-raw-options=cookies-from-browser="$PREFERRED_BROWSER" --ytdl-format="bestvideo+bestaudio/best")
+  elif [ -n "$COOKIE_FILE" ] && [ -f "$COOKIE_FILE" ]; then
+    PREFERRED_BROWSER_OPTS=(--cookies "$COOKIE_FILE")
+    MPV_YTDL_OPTS=(--ytdl-raw-options=cookies="$COOKIE_FILE" --ytdl-format="bestvideo+bestaudio/best")
   else
     PREFERRED_BROWSER_OPTS=()
     MPV_YTDL_OPTS=(--ytdl-format="bestvideo+bestaudio/best")
   fi
 
   NO_OF_SEARCH_RESULTS=$(validate_numeric "$(find_config_option "NO_OF_SEARCH_RESULTS")" 30 1 100)
+
+  FEED_PAGE_SIZE=$(validate_numeric "$(find_config_option "FEED_PAGE_SIZE")" 25 1 100)
 
   FEED_CACHE_TTL=$(validate_numeric "$(find_config_option "FEED_CACHE_TTL")" 900 0 86400)
 
@@ -541,6 +555,50 @@ validate_json_response() {
   return 0
 }
 
+# Check video availability from metadata JSON
+# Returns a status string: "available", "private", "members_only", "deleted",
+# "age_restricted", "unavailable", or "login_required"
+get_video_availability() {
+  local video_json="$1"
+  local availability title
+
+  availability=$(echo "$video_json" | jq -r '.availability // empty' 2>/dev/null)
+  title=$(echo "$video_json" | jq -r '.title // empty' 2>/dev/null)
+
+  # Check title patterns first (most reliable for flat-playlist results)
+  case "$title" in
+    "[Private video]"*|"[Private Video]"*) echo "private"; return ;;
+    "[Deleted video]"*|"[Deleted Video]"*) echo "deleted"; return ;;
+    "[Members only]"*|"[Member only]"*) echo "members_only"; return ;;
+    "[Unavailable]"*) echo "unavailable"; return ;;
+  esac
+
+  # Check availability field from yt-dlp
+  case "$availability" in
+    private) echo "private" ;;
+    premium_only) echo "members_only" ;;
+    subscriber_only) echo "members_only" ;;
+    needs_auth) echo "login_required" ;;
+    needs_premium) echo "members_only" ;;
+    *) echo "available" ;;
+  esac
+}
+
+# Return a colored label for unavailable video status
+# Usage: label=$(availability_label "private")
+availability_label() {
+  local status="$1"
+  case "$status" in
+    private)        echo -e "${RED}[PRIVATE]${RESET}" ;;
+    deleted)        echo -e "${RED}[DELETED]${RESET}" ;;
+    members_only)   echo -e "${YELLOW}[MEMBERS ONLY]${RESET}" ;;
+    age_restricted) echo -e "${YELLOW}[AGE RESTRICTED]${RESET}" ;;
+    login_required) echo -e "${YELLOW}[LOGIN REQUIRED]${RESET}" ;;
+    unavailable)    echo -e "${RED}[UNAVAILABLE]${RESET}" ;;
+    *) return ;;
+  esac
+}
+
 # --- Feed cache functions ---
 
 load_feed_cache() {
@@ -624,8 +682,11 @@ kill_bg_feed_fetch() {
 merge_feed_entries() {
   local existing="$1"
   local new_entries="$2"
+  # Preserve existing order, append only truly new entries at the end
   echo "$existing" | jq --argjson new "$(echo "$new_entries" | jq '.entries')" '
-    .entries = (.entries + $new) | .entries = (.entries | unique_by(.id // .url))
+    .entries as $old |
+    ($old | map(.id // .url)) as $seen |
+    .entries = ($old + [$new[] | select((.id // .url) as $k | $seen | index($k) | not)])
   '
 }
 
@@ -688,27 +749,50 @@ kill_bg_feed_extend() {
 build_homepage_fzf_input() {
   local data_file="$1"
   local output_file="$2"
-  local no_more_flag="$3"
+  local page="$3"
   local data
   data=$(cat "$data_file" 2>/dev/null) || return 1
-  local titles
-  titles=$(echo "$data" | jq '
-    .entries
+  local total_entries
+  total_entries=$(echo "$data" | jq '.entries | length')
+  local start_idx=$(( (page - 1) * FEED_PAGE_SIZE ))
+  local total_pages=$(( (total_entries + FEED_PAGE_SIZE - 1) / FEED_PAGE_SIZE ))
+  [ "$total_pages" -lt 1 ] && total_pages=1
+  local titles _avail_markers
+  titles=$(echo "$data" | jq --argjson start "$start_idx" --argjson count "$FEED_PAGE_SIZE" '
+    .entries[$start:$start + $count]
     | to_entries
-    | map("\(.key+1|tostring| if (.|length) < 2 then "0" + . else . end) " + .value.title)
+    | map("\(.key+1+$start|tostring| if (.|length) < 2 then "0" + . else . end) " + .value.title)
     | .[]
   ' -r 2>/dev/null)
-  local nav=""
-  if [ "$no_more_flag" != "1" ]; then
-    if is_bg_feed_extend_running; then
-      nav="Load More (fetching...)"
-    else
-      nav="Load More"
-    fi
+  # Check availability for homepage entries
+  _avail_markers=$(echo "$data" | jq --argjson start "$start_idx" --argjson count "$FEED_PAGE_SIZE" -r '
+    .entries[$start:$start + $count][] |
+    if .title // "" | test("\\[Private [Vv]ideo\\]") then "private"
+    elif .title // "" | test("\\[Deleted [Vv]ideo\\]") then "deleted"
+    elif .title // "" | test("\\[(Members|Member) only\\]") then "members_only"
+    elif .title // "" | test("\\[Unavailable\\]") then "unavailable"
+    elif .availability == "private" then "private"
+    elif .availability == "premium_only" or .availability == "subscriber_only" or .availability == "needs_premium" then "members_only"
+    elif .availability == "needs_auth" then "login_required"
+    else "available"
+    end
+  ' 2>/dev/null)
+  if echo "$_avail_markers" | grep -qv "^available$" 2>/dev/null; then
+    local _ann_titles=""
+    while IFS= read -r _t && IFS= read -r _av <&3; do
+      if [ -n "$_av" ] && [ "$_av" != "available" ]; then
+        _t="$_t $(availability_label "$_av")"
+      fi
+      _ann_titles="${_ann_titles:+${_ann_titles}
+}${_t}"
+    done <<< "$titles" 3<<< "$_avail_markers"
+    titles="$_ann_titles"
   fi
   {
     echo "$titles"
-    [ -n "$nav" ] && echo "$nav"
+    [ "$page" -lt "$total_pages" ] && echo "Next"
+    [ "$page" -gt 1 ] && echo "Previous"
+    echo "Reload"
     if [ "$ENABLE_PREVIEW" = "true" ]; then
       echo -e "${CYAN}󰌍${RESET}  Back"
       echo -e "${CYAN}󰍜${RESET}  Main Menu"
@@ -725,10 +809,14 @@ start_feed_live_updater() {
   local titles_file="$2"
   local fzf_port="$3"
   local url="$4"
-  local no_more_file="$5"
+  local page_file="$5"
   (
+    local feed_no_more=0
     while [ -f "$CLI_CACHE_DIR/feed_live_updater.pid" ]; do
       sleep 3
+      local current_page
+      current_page=$(cat "$page_file" 2>/dev/null) || current_page=1
+      # Check for extend results
       local bg_result
       if bg_result=$(check_bg_feed_extend_result 2>/dev/null); then
         [ -n "$YT_X_DEBUG" ] && echo "[DEBUG] Live updater: extend completed, merging" >&2
@@ -739,12 +827,7 @@ start_feed_live_updater() {
         merged=$(merge_feed_entries "$current_data" "$bg_result")
         new_count=$(echo "$merged" | jq '.entries | length')
         rm -f "$CLI_CACHE_DIR/feed_bg_extend_result.json" "$CLI_CACHE_DIR/feed_bg_extend.pid"
-        if [ "$new_count" -le "$old_count" ]; then
-          echo "1" > "$no_more_file"
-          [ -n "$YT_X_DEBUG" ] && echo "[DEBUG] Live updater: no new entries" >&2
-          build_homepage_fzf_input "$data_file" "$titles_file" "1"
-          curl -s "localhost:$fzf_port" -d "reload(cat $titles_file)" 2>/dev/null
-        else
+        if [ "$new_count" -gt "$old_count" ]; then
           write_file_locked "$merged" "$data_file"
           save_feed_cache "$merged"
           # Generate text previews for new entries (background)
@@ -757,19 +840,21 @@ start_feed_live_updater() {
           ')
           search_results="$new_entries_json"
           generate_text_preview "$new_entries_json" 2>/dev/null &
-          # Download preview images for new entries (background)
           if [ "$ENABLE_PREVIEW" = "true" ] && [ "$PREFERRED_SELECTOR" = "fzf" ]; then
             local new_raw_json
             new_raw_json=$(echo "$merged" | jq --argjson start "$old_count" '.entries = .entries[$start:]')
             download_preview_images "$new_raw_json" 2>/dev/null &
           fi
-          # Rebuild fzf input and reload
-          build_homepage_fzf_input "$data_file" "$titles_file" "$(cat "$no_more_file" 2>/dev/null)"
+          # Rebuild fzf input for current page and reload
+          build_homepage_fzf_input "$data_file" "$titles_file" "$current_page"
           curl -s "localhost:$fzf_port" -d "reload(cat $titles_file)" 2>/dev/null
           [ -n "$YT_X_DEBUG" ] && echo "[DEBUG] Live updater: reloaded fzf ($old_count -> $new_count)" >&2
           # Start next extend fetch
           local next_count=$((new_count + NO_OF_SEARCH_RESULTS))
           start_bg_feed_extend "$url" "$next_count"
+        else
+          feed_no_more=1
+          [ -n "$YT_X_DEBUG" ] && echo "[DEBUG] Live updater: no new entries from extend" >&2
         fi
       fi
     done
@@ -799,32 +884,71 @@ play_with_mpv() {
   stderr_file=$(mktemp)
   "$MPV_CMD" "$@" 2> >(tee "$stderr_file" >&2)
   local exit_code=$?
-  if [ $exit_code -ne 0 ] && grep -q "Sign in to confirm you're not a bot" "$stderr_file" 2>/dev/null; then
-    rm -f "$stderr_file"
-    echo "" >&2
-    echo -e "\033[31mYouTube bot detection triggered.\033[0m" >&2
-    if [ -z "$PREFERRED_BROWSER" ]; then
-      echo "No browser configured for cookie extraction." >&2
-    else
-      echo "Current browser: $PREFERRED_BROWSER (cookies may be stale)" >&2
-    fi
-    if confirm "Set up browser cookies to fix this?"; then
-      if select_browser "bot-detected"; then
-        echo "" >&2
-        echo "Retrying playback..." >&2
-        # Extract non-ytdl-opts args (URLs and other mpv flags) and retry with updated MPV_YTDL_OPTS
-        local retry_args=()
-        for arg in "$@"; do
-          case "$arg" in
-            --ytdl-raw-options=*|--ytdl-format=*) ;; # skip old ytdl opts
-            *) retry_args+=("$arg") ;;
-          esac
-        done
-        "$MPV_CMD" "${MPV_YTDL_OPTS[@]}" "${retry_args[@]}"
-        return $?
+  if [ $exit_code -ne 0 ]; then
+    # Check for specific YouTube error messages and show clear feedback
+    if grep -qi "is a private video\|Private video" "$stderr_file" 2>/dev/null; then
+      rm -f "$stderr_file"
+      echo "" >&2
+      echo -e "\033[31m\033[1mPlayback failed: This video is private.\033[0m" >&2
+      echo "The video owner has made this video private." >&2
+      return $exit_code
+    elif grep -qi "members-only\|member-only\|Join this channel" "$stderr_file" 2>/dev/null; then
+      rm -f "$stderr_file"
+      echo "" >&2
+      echo -e "\033[33m\033[1mPlayback failed: This video is for channel members only.\033[0m" >&2
+      echo "You need a channel membership to access this content." >&2
+      return $exit_code
+    elif grep -qi "Video unavailable\|This video is unavailable\|this video is no longer available" "$stderr_file" 2>/dev/null; then
+      rm -f "$stderr_file"
+      echo "" >&2
+      echo -e "\033[31m\033[1mPlayback failed: This video is unavailable.\033[0m" >&2
+      echo "The video may have been removed or is not available in your region." >&2
+      return $exit_code
+    elif grep -qi "age-restricted\|age_restricted\|Sign in to confirm your age" "$stderr_file" 2>/dev/null; then
+      rm -f "$stderr_file"
+      echo "" >&2
+      echo -e "\033[33m\033[1mPlayback failed: This video is age-restricted.\033[0m" >&2
+      echo "Try configuring browser cookies to authenticate." >&2
+      return $exit_code
+    elif grep -qi "This live event has ended\|Premieres in" "$stderr_file" 2>/dev/null; then
+      rm -f "$stderr_file"
+      echo "" >&2
+      echo -e "\033[33m\033[1mPlayback failed: This live stream/premiere is not currently available.\033[0m" >&2
+      return $exit_code
+    elif grep -qi "removed by the uploader\|This video has been removed" "$stderr_file" 2>/dev/null; then
+      rm -f "$stderr_file"
+      echo "" >&2
+      echo -e "\033[31m\033[1mPlayback failed: This video has been removed.\033[0m" >&2
+      return $exit_code
+    elif grep -q "Sign in to confirm you're not a bot" "$stderr_file" 2>/dev/null; then
+      rm -f "$stderr_file"
+      echo "" >&2
+      echo -e "\033[31mYouTube bot detection triggered.\033[0m" >&2
+      if [ -z "$PREFERRED_BROWSER" ]; then
+        echo "No browser configured for cookie extraction." >&2
+      else
+        echo "Current browser: $PREFERRED_BROWSER (cookies may be stale)" >&2
       fi
+      if confirm "Set up browser cookies to fix this?"; then
+        if select_browser "bot-detected"; then
+          echo "" >&2
+          echo "Retrying playback..." >&2
+          local retry_args=()
+          for arg in "$@"; do
+            case "$arg" in
+              --ytdl-raw-options=*|--ytdl-format=*) ;; # skip old ytdl opts
+              *) retry_args+=("$arg") ;;
+            esac
+          done
+          "$MPV_CMD" "${MPV_YTDL_OPTS[@]}" "${retry_args[@]}"
+          return $?
+        fi
+      fi
+      return $exit_code
+    else
+      # Generic playback failure - show stderr content for debugging
+      rm -f "$stderr_file"
     fi
-    return $exit_code
   fi
   rm -f "$stderr_file"
   return $exit_code
@@ -1059,12 +1183,14 @@ launcher() {
       export -f "$desc_func" 2>/dev/null
       preview_opts=(--preview="bash -c '$desc_func \"\$1\"' -- {}" --preview-window=bottom:4:wrap:noborder)
     fi
+    local _fzf_header_opts=()
+    [ "$FZF_HAS_HEADER_FIRST" = 1 ] && _fzf_header_opts=(--header-first)
     selection=$(fzf \
       --info=hidden \
       --layout=reverse \
       --height=100% \
       --prompt="${1}: " \
-      --header-first --header="$CLI_HEADER" \
+      "${_fzf_header_opts[@]}" --header="$CLI_HEADER" \
       --exact --cycle --ansi \
       "${preview_opts[@]}")
     # Skip separator lines (lines containing ┈ characters)
@@ -1164,6 +1290,10 @@ preview_image=$(echo "$thumbnail_url" | generate_sha256)
     [ "$live_status" = "is_live" ] && live_status='Online'
     [ "$live_status" = "was_live" ] && live_status='Offline'
     [ "$live_status" = "null" ] && live_status='False'
+
+    # Detect video availability
+    local video_availability
+    video_availability=$(get_video_availability "$video")
 
     description=$(echo "$video" | jq '.description' -r | sed "s/\"//g;s/%//g")
     # Try .channel first, then .uploader as fallback
@@ -1369,6 +1499,22 @@ printf \"${MAGENTA}${BOLD}  Duration:${RESET}   $duration\n\";
 if [ \"\$_view_count\" = \"N/A\" ]; then printf \"${MAGENTA}${BOLD}  Views:${RESET}      N/A\n\"; else printf \"${MAGENTA}${BOLD}  Views:${RESET}      \$_view_count views\n\"; fi
 printf \"${MAGENTA}${BOLD}  Live:${RESET}       \$_live_status\n\";
 printf \"${MAGENTA}${BOLD}  Uploaded:${RESET}   $timestamp\n\";
+$(if [ "$video_availability" != "available" ]; then
+  local _pc _pt
+  case "$video_availability" in
+    private)        _pc="${RED}" ; _pt="Private Video" ;;
+    deleted)        _pc="${RED}" ; _pt="Deleted Video" ;;
+    members_only)   _pc="${YELLOW}" ; _pt="Members Only" ;;
+    age_restricted) _pc="${YELLOW}" ; _pt="Age Restricted" ;;
+    login_required) _pc="${YELLOW}" ; _pt="Login Required" ;;
+    unavailable)    _pc="${RED}" ; _pt="Unavailable" ;;
+  esac
+  echo "echo"
+  echo "printf \"${_pc}${BOLD}  ⚠ Status:   ${_pt}${RESET}\n\";"
+  echo "printf \"${_pc}  This video cannot be played.${RESET}\n\";"
+fi)" >"$CLI_PREVIEW_SCRIPTS_DIR/$(echo "$video" | jq ".title" -r | generate_sha256).txt"
+
+    printf "
 echo
 
 # Separator before description
@@ -1390,7 +1536,7 @@ fi
 #   fzf_preview \"$CLI_PREVIEW_IMAGES_CACHE_DIR/${preview_image}.jpg\" 2>/dev/null
 # fi
 
-" >"$CLI_PREVIEW_SCRIPTS_DIR/$(echo "$video" | jq ".title" -r | generate_sha256).txt"
+" >>"$CLI_PREVIEW_SCRIPTS_DIR/$(echo "$video" | jq ".title" -r | generate_sha256).txt"
 
   done
 }
@@ -1439,14 +1585,18 @@ launcher_with_preview() {
     fi
     ;;
   *)
+    local _fzf_bind='right:accept,ctrl-r:refresh-preview'
+    [ "$FZF_HAS_LISTEN" = 1 ] && _fzf_bind='right:accept,resize:refresh-preview,ctrl-r:refresh-preview'
+    local _fzf_header_opts=()
+    [ "$FZF_HAS_HEADER_FIRST" = 1 ] && _fzf_header_opts=(--header-first)
     selection=$(fzf \
       --info=hidden \
       --layout=reverse \
       --height=100% \
       --prompt="${1}: " \
-      --header-first --header="$CLI_HEADER" \
+      "${_fzf_header_opts[@]}" --header="$CLI_HEADER" \
       --preview-window=left,35%,wrap \
-      --bind='right:accept,resize:refresh-preview,ctrl-r:refresh-preview' \
+      --bind="$_fzf_bind" \
       --expect=shift-left,shift-right --tabstop=1 \
       --cycle --exact \
       --ansi --preview="$2")
@@ -1705,6 +1855,23 @@ run_yt_dlp() {
   fi
 
   if ! validate_json_response "$result" "playlist data"; then
+    # If browser cookies failed, try cookie file fallback
+    if [ -n "$COOKIE_FILE" ] && [ -f "$COOKIE_FILE" ] && [ "${PREFERRED_BROWSER_OPTS[*]}" != "--cookies $COOKIE_FILE" ]; then
+      [ -n "$YT_X_DEBUG" ] && echo "[DEBUG] Browser cookies failed, trying cookie file fallback" >&2
+      local fallback_opts=(--cookies "$COOKIE_FILE")
+      if command -v "gum" >/dev/null 2>&1; then
+        result=$(gum spin --show-output -- yt-dlp "$1" -J --flat-playlist --extractor-args youtubetab:approximate_date "${playlist_range_opts[@]}" "${fallback_opts[@]}" 2>/dev/null)
+      else
+        result=$(yt-dlp "$1" -J --flat-playlist --extractor-args youtubetab:approximate_date "${playlist_range_opts[@]}" "${fallback_opts[@]}" 2>/dev/null)
+      fi
+      if validate_json_response "$result" "playlist data (cookie file fallback)"; then
+        echo "Warning: Browser cookie extraction failed, using cookie file" >&2
+        PREFERRED_BROWSER_OPTS=(--cookies "$COOKIE_FILE")
+        MPV_YTDL_OPTS=(--ytdl-raw-options=cookies="$COOKIE_FILE" --ytdl-format="bestvideo+bestaudio/best")
+        echo "$result"
+        return 0
+      fi
+    fi
     send_notification "Failed to fetch data"
     echo '{"entries":[]}'
     return 1
@@ -2641,14 +2808,19 @@ playlist_explorer() {
       fi
     fi
     if [ "$is_homepage" = 1 ]; then
-      # Homepage: show ALL accumulated entries (no pagination)
+      # Homepage: paginated view (FEED_PAGE_SIZE per page)
+      local start_idx=$(( (feed_page - 1) * FEED_PAGE_SIZE ))
+      local display_results
+      display_results=$(echo "$feed_all_results" | jq --argjson start "$start_idx" --argjson count "$FEED_PAGE_SIZE" '
+        .entries = (.entries[$start:$start + $count])
+      ')
       [ "$DOWNLOAD_IMAGES" = 0 ] &&
-        search_results=$(echo "$feed_all_results" | jq '
+        search_results=$(echo "$display_results" | jq "
             .entries=(.entries
             | to_entries
-            | map(.value.title="\(.key+1|tostring| if (.|length) < 2 then "0" + . else . end) "+.value.title)
+            | map(.value.title=\"\(.key+1+$start_idx|tostring| if (.|length) < 2 then \"0\" + . else . end) \"+.value.title)
             |map(.value))
-            ') && ! [ "$ENABLE_PREVIEW" = "true" ] || ! [ "$PREFERRED_SELECTOR" = "fzf" ] && DOWNLOAD_IMAGES=1
+            ") && ! [ "$ENABLE_PREVIEW" = "true" ] || ! [ "$PREFERRED_SELECTOR" = "fzf" ] && DOWNLOAD_IMAGES=1
     elif [ "$is_feed" = 1 ]; then
       # For feeds: slice accumulated results to show current page
       local start_idx=$(( (feed_page - 1) * NO_OF_SEARCH_RESULTS ))
@@ -2676,36 +2848,78 @@ playlist_explorer() {
             ") && ! [ "$ENABLE_PREVIEW" = "true" ] || ! [ "$PREFERRED_SELECTOR" = "fzf" ] && DOWNLOAD_IMAGES=1
     fi
     titles=$(echo "$search_results" | jq '.entries[].title' -r 2>/dev/null)
+    # Check if any entries have availability issues (single jq call for performance)
+    local _avail_list
+    _avail_list=$(echo "$search_results" | jq -r '.entries[] |
+      if .title // "" | test("(^|^[0-9]+ )\\[Private [Vv]ideo\\]") then "private"
+      elif .title // "" | test("(^|^[0-9]+ )\\[Deleted [Vv]ideo\\]") then "deleted"
+      elif .title // "" | test("(^|^[0-9]+ )\\[(Members|Member) only\\]") then "members_only"
+      elif .title // "" | test("(^|^[0-9]+ )\\[Unavailable\\]") then "unavailable"
+      elif .availability == "private" then "private"
+      elif .availability == "premium_only" or .availability == "subscriber_only" or .availability == "needs_premium" then "members_only"
+      elif .availability == "needs_auth" then "login_required"
+      else "available"
+      end
+    ' 2>/dev/null)
+    # Only annotate if there are unavailable videos
+    if echo "$_avail_list" | grep -qv "^available$" 2>/dev/null; then
+      local _annotated_titles=""
+      while IFS= read -r _t && IFS= read -r _avail <&3; do
+        if [ -n "$_avail" ] && [ "$_avail" != "available" ]; then
+          _t="$_t $(availability_label "$_avail")"
+        fi
+        _annotated_titles="${_annotated_titles:+${_annotated_titles}
+}${_t}"
+      done <<< "$titles" 3<<< "$_avail_list"
+      titles="$_annotated_titles"
+    fi
     [ "$ENABLE_PREVIEW" = "true" ] && [ "$PREFERRED_SELECTOR" = "fzf" ] && [ "$DOWNLOAD_IMAGES" = 0 ] && download_preview_images "$search_results" && DOWNLOAD_IMAGES=1
     export search_results SHELL
     if [ "$is_homepage" = 1 ] && [ "$PREFERRED_SELECTOR" = "fzf" ]; then
-      # Homepage with fzf: use --listen for live auto-updates
+      # Homepage with fzf: use --listen for live auto-updates (requires fzf 0.36+)
       local _live_data_file="$CLI_CACHE_DIR/feed_live_data.json"
       local _live_titles_file="$CLI_CACHE_DIR/feed_live_titles.txt"
-      local _live_no_more_file="$CLI_CACHE_DIR/feed_live_no_more"
+      local _live_page_file="$CLI_CACHE_DIR/feed_live_page"
       local _fzf_listen_port=$((RANDOM % 10000 + 40000))
+      local _fzf_listen_opts=()
       write_file_locked "$feed_all_results" "$_live_data_file"
-      [ "$feed_no_more" = 1 ] && echo "1" > "$_live_no_more_file" || rm -f "$_live_no_more_file"
-      build_homepage_fzf_input "$_live_data_file" "$_live_titles_file" "$feed_no_more"
-      start_feed_live_updater "$_live_data_file" "$_live_titles_file" "$_fzf_listen_port" "$url" "$_live_no_more_file"
+      echo "$feed_page" > "$_live_page_file"
+      build_homepage_fzf_input "$_live_data_file" "$_live_titles_file" "$feed_page"
+      # Start background extend fetch so the live updater can auto-append new content
+      if ! is_bg_feed_extend_running && [ ! -f "$CLI_CACHE_DIR/feed_bg_extend_result.json" ]; then
+        local _extend_count=$(( $(echo "$feed_all_results" | jq '.entries | length') + NO_OF_SEARCH_RESULTS ))
+        start_bg_feed_extend "$url" "$_extend_count"
+      fi
+      if [ "$FZF_HAS_LISTEN" = 1 ]; then
+        _fzf_listen_opts=(--listen "$_fzf_listen_port")
+        start_feed_live_updater "$_live_data_file" "$_live_titles_file" "$_fzf_listen_port" "$url" "$_live_page_file"
+      fi
+      local _total_entries
+      _total_entries=$(echo "$feed_all_results" | jq '.entries | length')
+      local _total_pages=$(( (_total_entries + FEED_PAGE_SIZE - 1) / FEED_PAGE_SIZE ))
+      [ "$_total_pages" -lt 1 ] && _total_pages=1
+      local _fzf_bind='right:accept,ctrl-r:refresh-preview'
+      [ "$FZF_HAS_LISTEN" = 1 ] && _fzf_bind='right:accept,resize:refresh-preview,ctrl-r:refresh-preview'
+      local _fzf_header_opts=()
+      [ "$FZF_HAS_HEADER_FIRST" = 1 ] && _fzf_header_opts=(--header-first)
       local _fzf_out
       if [ "$ENABLE_PREVIEW" = "true" ]; then
         _fzf_out=$(cat "$_live_titles_file" | fzf \
-          --listen "$_fzf_listen_port" \
+          "${_fzf_listen_opts[@]}" \
           --info=hidden --layout=reverse --height=100% \
-          --prompt="select video: " \
-          --header-first --header="$CLI_HEADER" \
+          --prompt="Feed [${feed_page}/${_total_pages}]: " \
+          "${_fzf_header_opts[@]}" --header="$CLI_HEADER" \
           --preview-window=left,35%,wrap \
-          --bind='right:accept,resize:refresh-preview,ctrl-r:refresh-preview' \
+          --bind="$_fzf_bind" \
           --expect=shift-left,shift-right --tabstop=1 \
           --cycle --exact --ansi \
           --preview="$PREVIEW_SCRIPT_FOR_VIDEOS")
       else
         _fzf_out=$(cat "$_live_titles_file" | fzf \
-          --listen "$_fzf_listen_port" \
+          "${_fzf_listen_opts[@]}" \
           --info=hidden --layout=reverse --height=100% \
-          --prompt="select video: " \
-          --header-first --header="$CLI_HEADER" \
+          --prompt="Feed [${feed_page}/${_total_pages}]: " \
+          "${_fzf_header_opts[@]}" --header="$CLI_HEADER" \
           --exact --cycle --ansi)
       fi
       stop_feed_live_updater
@@ -2715,18 +2929,17 @@ playlist_explorer() {
         _updated_data=$(read_file_locked "$_live_data_file" 2>/dev/null)
         if [ -n "$_updated_data" ]; then
           feed_all_results="$_updated_data"
-          # Re-number search_results so video lookup works for all entries
-          search_results=$(echo "$feed_all_results" | jq '
-            .entries=(.entries
+          local _page_start_idx=$(( (feed_page - 1) * FEED_PAGE_SIZE ))
+          search_results=$(echo "$feed_all_results" | jq --argjson start "$_page_start_idx" --argjson count "$FEED_PAGE_SIZE" '
+            .entries = (.entries[$start:$start + $count]
             | to_entries
-            | map(.value.title="\(.key+1|tostring| if (.|length) < 2 then "0" + . else . end) "+.value.title)
-            |map(.value))
+            | map(.value.title="\(.key+1+$start|tostring| if (.|length) < 2 then "0" + . else . end) "+.value.title)
+            | map(.value))
           ')
           export search_results
         fi
       fi
-      [ -f "$_live_no_more_file" ] && feed_no_more=1
-      rm -f "$_live_data_file" "$_live_titles_file" "$_live_no_more_file"
+      rm -f "$_live_data_file" "$_live_titles_file" "$_live_page_file"
       DOWNLOAD_IMAGES=0
       # Process fzf --expect output (key on line 1, selection on line 2+)
       if [ "$ENABLE_PREVIEW" = "true" ]; then
@@ -2745,15 +2958,14 @@ playlist_explorer() {
       # Non-homepage or rofi: use standard launcher
       local nav_options
       if [ "$is_homepage" = 1 ]; then
-        if [ "$feed_no_more" = 1 ]; then
-          nav_options=""
-        elif is_bg_feed_extend_running; then
-          nav_options="Load More (fetching...)"
-        elif [ -f "$CLI_CACHE_DIR/feed_bg_extend_result.json" ]; then
-          nav_options="Load More (ready)"
-        else
-          nav_options="Load More"
-        fi
+        local _total_entries
+        _total_entries=$(echo "$feed_all_results" | jq '.entries | length')
+        local _total_pages=$(( (_total_entries + FEED_PAGE_SIZE - 1) / FEED_PAGE_SIZE ))
+        [ "$_total_pages" -lt 1 ] && _total_pages=1
+        nav_options=""
+        [ "$feed_page" -lt "$_total_pages" ] && nav_options="Next"
+        [ "$feed_page" -gt 1 ] && nav_options="${nav_options:+$nav_options\n}Previous"
+        nav_options="${nav_options:+$nav_options\n}Reload"
       else
         nav_options="Next\nPrevious"
       fi
@@ -2766,64 +2978,56 @@ playlist_explorer() {
     clear
     title="$(echo "$title" | sed 's/"/\\"/g')"
     case "$title" in
-    "Load More"*)
-      # If bg extend is running, wait for it instead of starting a duplicate fetch
-      if is_bg_feed_extend_running; then
-        echo "Fetching more content..." >&2
-        local extend_pid
-        extend_pid=$(cat "$CLI_CACHE_DIR/feed_bg_extend.pid" 2>/dev/null)
-        [ -n "$extend_pid" ] && tail --pid="$extend_pid" -f /dev/null 2>/dev/null
-      fi
-      local extend_results
-      if extend_results=$(check_bg_feed_extend_result); then
-        [ -n "$YT_X_DEBUG" ] && echo "[DEBUG] Using background extend result for Load More" >&2
-        local old_count
-        old_count=$(echo "$feed_all_results" | jq '.entries | length')
-        feed_all_results=$(merge_feed_entries "$feed_all_results" "$extend_results")
-        local new_count
-        new_count=$(echo "$feed_all_results" | jq '.entries | length')
-        rm -f "$CLI_CACHE_DIR/feed_bg_extend_result.json" "$CLI_CACHE_DIR/feed_bg_extend.pid"
-        if [ "$new_count" -le "$old_count" ]; then
-          feed_no_more=1
-          send_notification "No more new content available"
-        else
-          save_feed_cache "$feed_all_results"
-          DOWNLOAD_IMAGES=0
-        fi
-      else
-        # No bg result available, do synchronous fetch
-        echo "Fetching more content..." >&2
-        local sync_fetch_count
-        sync_fetch_count=$(( $(echo "$feed_all_results" | jq '.entries | length') + NO_OF_SEARCH_RESULTS ))
-        local sync_result
-        sync_result=$(yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date --playlist-end "$sync_fetch_count" "${PREFERRED_BROWSER_OPTS[@]}" 2>/dev/null)
-        if echo "$sync_result" | jq -e '.entries' >/dev/null 2>&1; then
+    Reload)
+      if [ "$is_homepage" = 1 ]; then
+        # Wipe and re-fetch fresh content
+        kill_bg_feed_extend
+        echo "Reloading feed..." >&2
+        local reload_result
+        reload_result=$(run_yt_dlp "$url" "$NO_OF_SEARCH_RESULTS" 2>/dev/null)
+        if validate_json_response "$reload_result" "feed reload" 2>/dev/null; then
           local old_count
           old_count=$(echo "$feed_all_results" | jq '.entries | length')
-          feed_all_results=$(merge_feed_entries "$feed_all_results" "$sync_result")
           local new_count
-          new_count=$(echo "$feed_all_results" | jq '.entries | length')
-          if [ "$new_count" -le "$old_count" ]; then
-            feed_no_more=1
-            send_notification "No more new content available"
-          else
+          new_count=$(echo "$reload_result" | jq '.entries | length')
+          # Merge: keeps existing entries, appends any new ones at the end
+          local merged
+          merged=$(merge_feed_entries "$feed_all_results" "$reload_result")
+          local merged_count
+          merged_count=$(echo "$merged" | jq '.entries | length')
+          if [ "$merged_count" -gt "$old_count" ]; then
+            feed_all_results="$merged"
             save_feed_cache "$feed_all_results"
-            DOWNLOAD_IMAGES=0
+            send_notification "$((merged_count - old_count)) new videos added"
+          elif [ "$new_count" -gt 0 ]; then
+            # No new unique content but reload succeeded — keep existing feed
+            send_notification "Feed up to date"
+          else
+            # Reload returned empty results (fetch likely failed) — keep existing feed
+            send_notification "Reload returned no results, keeping current feed"
           fi
+          feed_page=1
+          DOWNLOAD_IMAGES=0
+          # Start extend cycle
+          local next_fetch_count
+          next_fetch_count=$(( $(echo "$feed_all_results" | jq '.entries | length') + NO_OF_SEARCH_RESULTS ))
+          start_bg_feed_extend "$url" "$next_fetch_count"
         else
-          send_notification "Failed to fetch more content"
+          send_notification "Reload failed, keeping current feed"
         fi
-      fi
-      # Start next bg extend for the next "Load More"
-      if [ "$feed_no_more" != 1 ]; then
-        local next_fetch_count
-        next_fetch_count=$(( $(echo "$feed_all_results" | jq '.entries | length') + NO_OF_SEARCH_RESULTS ))
-        start_bg_feed_extend "$url" "$next_fetch_count"
       fi
       continue
       ;;
     Next)
-      if [ "$is_feed" = 1 ]; then
+      if [ "$is_homepage" = 1 ]; then
+        local _total_entries
+        _total_entries=$(echo "$feed_all_results" | jq '.entries | length')
+        local _total_pages=$(( (_total_entries + FEED_PAGE_SIZE - 1) / FEED_PAGE_SIZE ))
+        if [ "$feed_page" -lt "$_total_pages" ]; then
+          feed_page=$((feed_page + 1))
+          DOWNLOAD_IMAGES=0
+        fi
+      elif [ "$is_feed" = 1 ]; then
         feed_page=$((feed_page + 1))
         local needed_entries=$((feed_page * NO_OF_SEARCH_RESULTS))
         local have_entries
@@ -2838,10 +3042,8 @@ playlist_explorer() {
           local new_count
           new_count=$(echo "$new_results" | jq '.entries | length')
           [ -n "$YT_X_DEBUG" ] && echo "[DEBUG] After fetch: $new_count entries" >&2
-          # Check if we actually got more entries
           local page_start=$(( (feed_page - 1) * NO_OF_SEARCH_RESULTS ))
           if [ "$new_count" -le "$page_start" ]; then
-            # Can't fill the next page - revert and notify
             feed_page=$((feed_page - 1))
             echo "No more content available" >&2
             sleep 2
@@ -2858,30 +3060,8 @@ playlist_explorer() {
       fi
       continue
       ;;
-    Refresh*)
-      # Check for bg fetch result first (instant update)
-      local refresh_results
-      if refresh_results=$(check_bg_feed_result); then
-        [ -n "$YT_X_DEBUG" ] && echo "[DEBUG] Using background fetch result for refresh" >&2
-        search_results="$refresh_results"
-        feed_all_results="$search_results"
-        save_feed_cache "$search_results"
-        rm -f "$CLI_CACHE_DIR/feed_bg_result.json" "$CLI_CACHE_DIR/feed_bg.pid"
-        feed_page=1
-        DOWNLOAD_IMAGES=0
-      elif refresh_results=$(run_yt_dlp "$url" "$NO_OF_SEARCH_RESULTS"); then
-        search_results="$refresh_results"
-        feed_all_results="$search_results"
-        save_feed_cache "$search_results"
-        feed_page=1
-        DOWNLOAD_IMAGES=0
-      else
-        send_notification "Refresh failed, keeping current feed"
-      fi
-      continue
-      ;;
     Previous)
-      if [ "$is_feed" = 1 ]; then
+      if [ "$is_homepage" = 1 ] || [ "$is_feed" = 1 ]; then
         [ "$feed_page" -gt 1 ] && feed_page=$((feed_page - 1))
         DOWNLOAD_IMAGES=0
       else
@@ -2907,7 +3087,7 @@ playlist_explorer() {
       ;;
     esac
     # Auto-start background extend fetch for homepage when user selects a video
-    if [ "$is_homepage" = 1 ] && [ "$feed_no_more" != 1 ] && ! is_bg_feed_extend_running && [ ! -f "$CLI_CACHE_DIR/feed_bg_extend_result.json" ]; then
+    if [ "$is_homepage" = 1 ] && ! is_bg_feed_extend_running && [ ! -f "$CLI_CACHE_DIR/feed_bg_extend_result.json" ]; then
       local auto_fetch_count
       auto_fetch_count=$(( $(echo "$feed_all_results" | jq '.entries | length') + NO_OF_SEARCH_RESULTS ))
       start_bg_feed_extend "$url" "$auto_fetch_count"
@@ -2915,13 +3095,20 @@ playlist_explorer() {
     id=$(echo "$title" | sed -E 's/^([0-9]+) .*/\1/g')
     # Strip leading zeros to avoid octal interpretation (08, 09 would fail)
     id=$((10#$id))
-    if [ "$is_feed" = 1 ] && [ "$is_homepage" != 1 ]; then
+    if [ "$is_homepage" = 1 ]; then
+      local page_start=$(( (feed_page - 1) * FEED_PAGE_SIZE ))
+      video="$(echo "$search_results" | jq ".entries[$((id - 1 - page_start))]")"
+    elif [ "$is_feed" = 1 ]; then
       local page_start=$(( (feed_page - 1) * NO_OF_SEARCH_RESULTS ))
       video="$(echo "$search_results" | jq ".entries[$((id - 1 - page_start))]")"
     else
       video="$(echo "$search_results" | jq ".entries[$((id - 1))]")"
     fi
     title=$(echo "$video" | jq '.title' -r | sed 's/^[0-9]\+ //g')
+
+    # Check video availability
+    local _video_avail
+    _video_avail=$(get_video_availability "$video")
 
     while true; do
       media_action="$(printf "\
@@ -3041,6 +3228,24 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/^.[[:space:]
         send_notification "Completed downloading of $playlist_name"
         ;;
       Listen)
+        if [ "$_video_avail" != "available" ]; then
+          local _avail_label
+          _avail_label=$(availability_label "$_video_avail")
+          echo "" >&2
+          echo -e "${RED}${BOLD}Cannot play video:${RESET} ${title}" >&2
+          echo -e "  Status: ${_avail_label}" >&2
+          case "$_video_avail" in
+            private)        echo -e "  This video is private and cannot be accessed." >&2 ;;
+            deleted)        echo -e "  This video has been deleted by the uploader." >&2 ;;
+            members_only)   echo -e "  This video is for channel members only." >&2 ;;
+            age_restricted) echo -e "  This video is age-restricted. Try configuring browser cookies." >&2 ;;
+            login_required) echo -e "  This video requires login. Try configuring browser cookies." >&2 ;;
+            unavailable)    echo -e "  This video is currently unavailable." >&2 ;;
+          esac
+          echo "" >&2
+          send_notification "Video unavailable: $(echo -e "$_avail_label" | sed 's/\x1B\[[0-9;]*m//g')"
+          continue
+        fi
         printf "${MAGENTA}Now Listening to:${RESET} $title\n"
         video_url=$(echo "$video" | jq '.url' -r)
         if echo "$video_url" | grep -q "list=RD"; then
@@ -3057,8 +3262,8 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/^.[[:space:]
             video_url=$(yt-dlp "$video_url" -q --no-warnings "${PREFERRED_BROWSER_OPTS[@]}" --get-url --format "bestaudio/best[height<=$VIDEO_QUALITY]/best" 2>/dev/null)
             video_url=$(echo "$video_url" | tail -n 1)
             if [ -z "$video_url" ]; then
-              echo "No video format found" >&2
-              sleep 5
+              echo -e "\033[31m\033[1mFailed to get audio stream.\033[0m The video may be private, unavailable, or region-locked." >&2
+              sleep 3
               break
             fi
           fi
@@ -3109,6 +3314,24 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/^.[[:space:]
         search_results="$_search_results"
         ;;
       "Watch")
+        if [ "$_video_avail" != "available" ]; then
+          local _avail_label
+          _avail_label=$(availability_label "$_video_avail")
+          echo "" >&2
+          echo -e "${RED}${BOLD}Cannot play video:${RESET} ${title}" >&2
+          echo -e "  Status: ${_avail_label}" >&2
+          case "$_video_avail" in
+            private)        echo -e "  This video is private and cannot be accessed." >&2 ;;
+            deleted)        echo -e "  This video has been deleted by the uploader." >&2 ;;
+            members_only)   echo -e "  This video is for channel members only." >&2 ;;
+            age_restricted) echo -e "  This video is age-restricted. Try configuring browser cookies." >&2 ;;
+            login_required) echo -e "  This video requires login. Try configuring browser cookies." >&2 ;;
+            unavailable)    echo -e "  This video is currently unavailable." >&2 ;;
+          esac
+          echo "" >&2
+          send_notification "Video unavailable: $(echo -e "$_avail_label" | sed 's/\x1B\[[0-9;]*m//g')"
+          continue
+        fi
         printf "${MAGENTA}Now watching:${RESET} $title\n"
 
         video_url=$(echo "$video" | jq '.url' -r)
@@ -3129,8 +3352,8 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/^.[[:space:]
             video_url=$(yt-dlp "$video_url" -q --no-warnings "${PREFERRED_BROWSER_OPTS[@]}" --get-url 2>/dev/null) #--format "best[height<=$VIDEO_QUALITY]/best"
             video_url=$(echo "$video_url" | tail -n 1)
             if [ -z "$video_url" ]; then
-              echo No video format found >&2
-              sleep 5
+              echo -e "\033[31m\033[1mFailed to get video stream.\033[0m The video may be private, unavailable, or region-locked." >&2
+              sleep 3
               break
             fi
           fi
@@ -3225,12 +3448,22 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/^.[[:space:]
         fi
         ;;
       Download)
+        if [ "$_video_avail" != "available" ]; then
+          echo -e "${RED}${BOLD}Cannot download:${RESET} $(availability_label "$_video_avail") ${title}" >&2
+          send_notification "Video unavailable"
+          continue
+        fi
         video_url=$(echo "$video" | jq '.url' -r)
         build_ytdlp_opts download
         yt-dlp "$video_url" --output "$DOWNLOAD_DIRECTORY/videos/individual/%(channel)s/%(title)s.%(ext)s" "${PREFERRED_BROWSER_OPTS[@]}" "${YTDLP_OPTS[@]}"
         send_notification "Completed downloading of $title"
         ;;
       "Download (Audio Only)")
+        if [ "$_video_avail" != "available" ]; then
+          echo -e "${RED}${BOLD}Cannot download:${RESET} $(availability_label "$_video_avail") ${title}" >&2
+          send_notification "Video unavailable"
+          continue
+        fi
         video_url=$(echo "$video" | jq '.url' -r)
         build_ytdlp_opts audio
         yt-dlp "$video_url" -x -f 'bestaudio' --audio-format mp3 --output "$DOWNLOAD_DIRECTORY/audio/individual/%(channel)s/%(title)s.%(ext)s" "${PREFERRED_BROWSER_OPTS[@]}" "${YTDLP_OPTS[@]}"
@@ -4232,6 +4465,18 @@ if [ "$WELCOME_SCREEN" = "true" ]; then
   fi
 fi
 core_dep_ch
+
+# Check fzf version for feature compatibility
+FZF_VERSION_RAW=$(fzf --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+FZF_VERSION_MAJOR=${FZF_VERSION_RAW%%.*}
+FZF_VERSION_MINOR=${FZF_VERSION_RAW##*.}
+FZF_HAS_LISTEN=0
+FZF_HAS_HEADER_FIRST=0
+if [ -n "$FZF_VERSION_MAJOR" ] && [ -n "$FZF_VERSION_MINOR" ]; then
+  fzf_ver=$((FZF_VERSION_MAJOR * 100 + FZF_VERSION_MINOR))
+  [ "$fzf_ver" -ge 35 ] && FZF_HAS_HEADER_FIRST=1
+  [ "$fzf_ver" -ge 36 ] && FZF_HAS_LISTEN=1
+fi
 
 # exports
 export -f generate_sha256 fzf_preview
