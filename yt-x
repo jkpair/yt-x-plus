@@ -2,7 +2,7 @@
 #A script written by Benexl in September 2024 under MIT LICENSE
 
 CLI_NAME="${YT_X_APP_NAME:-yt-x}"
-CLI_VERSION="0.6.0"
+CLI_VERSION="0.6.1"
 
 # ASCII header
 CLI_HEADER='
@@ -17,7 +17,7 @@ CLI_HEADER='
 │    ▄   ██                            │
 │    ▀████▀                            │
 │                                      │
-│   YouTube from the Terminal  v'"$CLI_VERSION"'  │
+│      Kurl_Marx Edition  v'"$CLI_VERSION"'       │
 ╰──────────────────────────────────────╯
 '
 CLI_AUTHOR="Benexl"
@@ -125,9 +125,6 @@ NOTIFICATION_DURATION: $NOTIFICATION_DURATION
 
 # where your downloads will be stored
 DOWNLOAD_DIRECTORY: $DOWNLOAD_DIRECTORY
-
-# whether to check for updates [true/false]
-UPDATE_CHECK: $UPDATE_CHECK
 
 # whether to enable the welcome screeen which runs once a day [true/false]
 WELCOME_SCREEN: $WELCOME_SCREEN
@@ -366,8 +363,6 @@ load_config() {
   [ -z "$DOWNLOAD_DIRECTORY" ] && DOWNLOAD_DIRECTORY="${XDG_VIDEOS_DIR:-"$HOME"/Videos}/$CLI_NAME"
   [ -d "$DOWNLOAD_DIRECTORY" ] || mkdir -p "$DOWNLOAD_DIRECTORY"
 
-  UPDATE_CHECK="$(find_config_option "UPDATE_CHECK")"
-  [ -z "$UPDATE_CHECK" ] && UPDATE_CHECK="true"
 
   WELCOME_SCREEN="$(find_config_option "WELCOME_SCREEN")"
   [ -z "$WELCOME_SCREEN" ] && WELCOME_SCREEN="true"
@@ -1021,18 +1016,22 @@ update_script() {
 }
 
 check_update() {
-  update=$(curl -s "https://raw.githubusercontent.com/jkpair/yt-x-plus/refs/heads/master/yt-x")
-  update="$(printf '%s\n' "$update" | diff -u "$(command -v yt-x)" - 2>/dev/null)"
-  if [ -n "$update" ]; then
-    confirm "An update has been found would you like to see the changes before deciding whether to update?" && echo "$update" | less
-    if [ "$PREFERRED_SELECTOR" = "fzf" ]; then
-      answer=$(prompt "$1")
-    else
-      answer=$(printf "Yes\nNo" | launcher "$1")
-    fi
-    case "$answer" in
-    [Yy]*) update_script ;;
-    esac
+  local remote_script remote_version
+  remote_script=$(curl -s "https://raw.githubusercontent.com/jkpair/yt-x-plus/refs/heads/master/yt-x" || return 1)
+  remote_version=$(printf '%s\n' "$remote_script" | grep -m1 '^CLI_VERSION=' | sed 's/CLI_VERSION="//;s/"//')
+
+  if [ -z "$remote_version" ]; then
+    send_notification "Failed to check for updates"
+    return 1
+  fi
+
+  if [ "$remote_version" = "$CLI_VERSION" ]; then
+    send_notification "You're on the latest version (v$CLI_VERSION)"
+    return 0
+  fi
+
+  if confirm "Update available: v$CLI_VERSION → v$remote_version. Would you like to update?"; then
+    update_script
   fi
 }
 
@@ -1157,6 +1156,7 @@ settings_menu_desc() {
     "Edit Custom Commands")   echo -e "Open custom commands file in your editor\n\n  Enter  Open  │  Esc  Back" ;;
     "Sync YouTube Subscriptions") echo -e "Import your YouTube subscriptions from your browser\n\n  Enter  Sync  │  Esc  Back" ;;
     "Check yt-dlp Version")   echo -e "Check if yt-dlp is up to date\n\n  Enter  Check  │  Esc  Back" ;;
+    "Check for Updates")      echo -e "Check if a new version of yt-x is available\n\n  Enter  Check  │  Esc  Back" ;;
     "Clear Search History")   echo -e "Delete all saved search history\n\n  Enter  Clear  │  Esc  Back" ;;
     "Back")                   echo -e "Return to the main menu\n\n  Enter  Confirm  │  Esc  Cancel" ;;
     "Exit")                   echo -e "Quit yt-x\n\n  Enter  Confirm  │  Esc  Cancel" ;;
@@ -1185,20 +1185,30 @@ launcher() {
     fi
     local _fzf_header_opts=()
     [ "$FZF_HAS_HEADER_FIRST" = 1 ] && _fzf_header_opts=(--header-first)
-    selection=$(fzf \
-      --info=hidden \
-      --layout=reverse \
-      --height=100% \
-      --prompt="${1}: " \
-      "${_fzf_header_opts[@]}" --header="$CLI_HEADER" \
-      --exact --cycle --ansi \
-      "${preview_opts[@]}")
-    # Skip separator lines (lines containing ┈ characters)
-    if echo "$selection" | grep -qF '┈'; then
-      echo ""
-    else
+    # Cache input so we can re-prompt on separator selection
+    local _cached_input
+    _cached_input=$(cat)
+    while true; do
+      selection=$(echo "$_cached_input" | fzf \
+        --info=hidden \
+        --layout=reverse \
+        --height=100% \
+        --prompt="${1}: " \
+        "${_fzf_header_opts[@]}" --header="$CLI_HEADER" \
+        --exact --cycle --ansi \
+        "${preview_opts[@]}")
+      # ESC pressed - return empty
+      if [ -z "$selection" ]; then
+        echo ""
+        break
+      fi
+      # Skip separator lines - re-show the menu
+      if echo "$selection" | grep -qF '┈'; then
+        continue
+      fi
       echo "$selection"
-    fi
+      break
+    done
     ;;
   esac
 
@@ -1589,27 +1599,37 @@ launcher_with_preview() {
     [ "$FZF_HAS_LISTEN" = 1 ] && _fzf_bind='right:accept,resize:refresh-preview,ctrl-r:refresh-preview'
     local _fzf_header_opts=()
     [ "$FZF_HAS_HEADER_FIRST" = 1 ] && _fzf_header_opts=(--header-first)
-    selection=$(fzf \
-      --info=hidden \
-      --layout=reverse \
-      --height=100% \
-      --prompt="${1}: " \
-      "${_fzf_header_opts[@]}" --header="$CLI_HEADER" \
-      --preview-window=left,35%,wrap \
-      --bind="$_fzf_bind" \
-      --expect=shift-left,shift-right --tabstop=1 \
-      --cycle --exact \
-      --ansi --preview="$2")
-    # Skip separator lines (lines containing ┈ characters)
-    # --expect returns key on line 1, selection on line 2
-    local key_line selected_line
-    key_line=$(echo "$selection" | head -n1)
-    selected_line=$(echo "$selection" | tail -n +2)
-    if echo "$selected_line" | grep -qF '┈'; then
-      echo "$key_line"
-    else
+    # Cache input so we can re-prompt on separator selection
+    local _cached_input
+    _cached_input=$(cat)
+    while true; do
+      selection=$(echo "$_cached_input" | fzf \
+        --info=hidden \
+        --layout=reverse \
+        --height=100% \
+        --prompt="${1}: " \
+        "${_fzf_header_opts[@]}" --header="$CLI_HEADER" \
+        --preview-window=left,35%,wrap \
+        --bind="$_fzf_bind" \
+        --expect=shift-left,shift-right --tabstop=1 \
+        --cycle --exact \
+        --ansi --preview="$2")
+      # ESC pressed - return empty
+      if [ -z "$selection" ]; then
+        echo ""
+        break
+      fi
+      # --expect returns key on line 1, selection on line 2
+      local key_line selected_line
+      key_line=$(echo "$selection" | head -n1)
+      selected_line=$(echo "$selection" | tail -n +2)
+      # Skip separator lines - re-show the menu
+      if echo "$selected_line" | grep -qF '┈'; then
+        continue
+      fi
       echo "$selection"
-    fi
+      break
+    done
     ;;
   esac
 
@@ -1658,6 +1678,17 @@ load_theme() {
   if [ -n "$FZF_COLORS" ] && [ -n "$FZF_STYLE" ]; then
     FZF_DEFAULT_OPTS="${FZF_COLORS}${FZF_STYLE}"
   fi
+
+  # Export gum theme variables (gum reads these from the environment)
+  export GUM_CONFIRM_PROMPT_FOREGROUND="${GUM_CONFIRM_PROMPT_FOREGROUND:-}"
+  export GUM_CONFIRM_SELECTED_BACKGROUND="${GUM_CONFIRM_SELECTED_BACKGROUND:-}"
+  export GUM_CONFIRM_SELECTED_FOREGROUND="${GUM_CONFIRM_SELECTED_FOREGROUND:-}"
+  export GUM_CONFIRM_UNSELECTED_BACKGROUND="${GUM_CONFIRM_UNSELECTED_BACKGROUND:-}"
+  export GUM_CONFIRM_UNSELECTED_FOREGROUND="${GUM_CONFIRM_UNSELECTED_FOREGROUND:-}"
+  export GUM_INPUT_CURSOR_FOREGROUND="${GUM_INPUT_CURSOR_FOREGROUND:-}"
+  export GUM_INPUT_PROMPT_FOREGROUND="${GUM_INPUT_PROMPT_FOREGROUND:-}"
+  export GUM_INPUT_HEADER_FOREGROUND="${GUM_INPUT_HEADER_FOREGROUND:-}"
+  export GUM_SPIN_SPINNER_FOREGROUND="${GUM_SPIN_SPINNER_FOREGROUND:-}"
 
   CURRENT_THEME="$theme_name"
   return 0
@@ -1725,6 +1756,17 @@ init_pretty_print() {
         --padding="0,1" --margin="0"
       '
       CURRENT_THEME="everforest-dark-hard"
+
+      # Default gum theme (Everforest Dark Hard)
+      export GUM_CONFIRM_PROMPT_FOREGROUND="#d3c6aa"
+      export GUM_CONFIRM_SELECTED_BACKGROUND="#a7c080"
+      export GUM_CONFIRM_SELECTED_FOREGROUND="#272e33"
+      export GUM_CONFIRM_UNSELECTED_BACKGROUND="#3c4841"
+      export GUM_CONFIRM_UNSELECTED_FOREGROUND="#d3c6aa"
+      export GUM_INPUT_CURSOR_FOREGROUND="#a7c080"
+      export GUM_INPUT_PROMPT_FOREGROUND="#83c092"
+      export GUM_INPUT_HEADER_FOREGROUND="#7fbbb3"
+      export GUM_SPIN_SPINNER_FOREGROUND="#83c092"
     fi
   else
     RED='' GREEN='' YELLOW='' BLUE='' MAGENTA='' CYAN='' ORANGE='' PURPLE='' GRAY='' WHITE='' BOLD='' DIM='' ITALIC='' RESET=''
@@ -3469,7 +3511,7 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/^.[[:space:]
         yt-dlp "$video_url" -x -f 'bestaudio' --audio-format mp3 --output "$DOWNLOAD_DIRECTORY/audio/individual/%(channel)s/%(title)s.%(ext)s" "${PREFERRED_BROWSER_OPTS[@]}" "${YTDLP_OPTS[@]}"
         send_notification "Completed downloading of $title"
         ;;
-      Back)
+      Back | "")
         break
         ;;
       Shell)
@@ -3501,9 +3543,6 @@ You can use the following:
         ;;
       Exit)
         byebye
-        ;;
-      "")
-        # Separator selected, skip
         ;;
       *)
         echo "Invalid action" >&2
@@ -3594,8 +3633,7 @@ ${RED}󰌍${RESET}  Back
 ${RED}󰈆${RESET}  Exit
 " | launcher "Select Action" | sed 's/^.[[:space:]]*//; s/[[:space:]]*$//' | xargs -r)"
     [ "$channel_action" = "Exit" ] && byebye
-    [ "$channel_action" = "Back" ] && break
-    [ -z "$channel_action" ] && continue  # Separator selected, skip
+    [ "$channel_action" = "Back" ] || [ -z "$channel_action" ] && break
     uploader_url_base="$(echo "$channel" | jq '.uploader_url' -r)"
 
     case "$channel_action" in
@@ -3693,6 +3731,11 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Action" "main_menu_desc" | sed 's/.
     ;;
   esac
   [ "$action" = "Exit" ] && byebye
+  if [ -z "$action" ]; then
+    confirm "Are you sure you want to exit?" && byebye
+    main
+    return
+  fi
 
   unset urlForAll
   case "$action" in
@@ -3800,7 +3843,7 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Action" "main_menu_desc" | sed 's/.
       channel_name=$(printf "%s\nMain Menu\nExit" "$channels" | launcher_with_preview "Select Channel" "$PREVIEW_SCRIPT_FOR_CHANNELS")
       channel_name="$(echo "$channel_name" | sed 's/ *$//g' | tr -d "\n")"
       [ "$channel_name" = "Exit" ] && byebye
-      [ "$channel_name" = "Main Menu" ] && break
+      [ "$channel_name" = "Main Menu" ] || [ -z "$channel_name" ] && break
       channel="$(echo "$channels_data" | jq --arg name "$channel_name" '.entries | map(select(.channel == $name)) | .[0]')"
       channels_explorer
     done
@@ -3860,6 +3903,7 @@ ${BLUE}󱘫${RESET}  Edit Custom Commands
 ${GRAY}┈┈┈┈┈┈┈${RESET} ${DIM}Sync${RESET} ${GRAY}┈┈┈┈┈┈┈┈┈${RESET}
 ${PURPLE}󰓦${RESET}  Sync YouTube Subscriptions
 ${PURPLE}󰏗${RESET}  Check yt-dlp Version
+${PURPLE}󰚰${RESET}  Check for Updates
 ${RED}󰆴${RESET}  Clear Search History
 ${GRAY}┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈${RESET}
 ${RED}󰌍${RESET}  Back
@@ -3886,22 +3930,64 @@ ${RED}󰈆${RESET}  Exit
         fi
         ;;
       Select\ Theme*)
-        # Build theme list with current selection indicator
-        local theme_list=""
         local available_themes
         available_themes=$(list_themes)
+
+        # Categorize themes (only needs to be done once)
+        local dark_themes="" light_themes="" contrast_themes=""
         while IFS= read -r theme; do
-          if [ "$theme" = "$CURRENT_THEME" ]; then
-            theme_list+="${GREEN}${RESET}  ${theme} ${DIM}(current)${RESET}\n"
-          else
-            theme_list+="${CYAN}󰔎${RESET}  ${theme}\n"
-          fi
+          case "$theme" in
+            *-light|*-latte|*-dawn)
+              light_themes+="$theme\n" ;;
+            modus-vivendi|modus-operandi)
+              contrast_themes+="$theme\n" ;;
+            *)
+              dark_themes+="$theme\n" ;;
+          esac
         done <<< "$available_themes"
 
-        local selected_theme
-        selected_theme=$(printf "%b" "$theme_list" | launcher "Select Theme" | sed 's/.*  //' | sed 's/ (current)//')
+        while true; do
+          # Rebuild styled menu each iteration so (current) marker updates
+          local theme_list=""
+          theme_list="${GRAY}┈┈┈┈┈┈┈┈${RESET} ${DIM}Dark${RESET} ${GRAY}┈┈┈┈┈┈┈┈┈${RESET}\n"
+          while IFS= read -r theme; do
+            [ -z "$theme" ] && continue
+            if [ "$theme" = "$CURRENT_THEME" ]; then
+              theme_list+="${GREEN}${RESET}  ${theme} ${DIM}(current)${RESET}\n"
+            else
+              theme_list+="${CYAN}󰔎${RESET}  ${theme}\n"
+            fi
+          done <<< "$(printf "%b" "$dark_themes")"
 
-        if [ -n "$selected_theme" ]; then
+          theme_list+="${GRAY}┈┈┈┈┈┈┈┈${RESET} ${DIM}Light${RESET} ${GRAY}┈┈┈┈┈┈┈┈${RESET}\n"
+          while IFS= read -r theme; do
+            [ -z "$theme" ] && continue
+            if [ "$theme" = "$CURRENT_THEME" ]; then
+              theme_list+="${GREEN}${RESET}  ${theme} ${DIM}(current)${RESET}\n"
+            else
+              theme_list+="${YELLOW}󰔎${RESET}  ${theme}\n"
+            fi
+          done <<< "$(printf "%b" "$light_themes")"
+
+          theme_list+="${GRAY}┈┈┈┈┈${RESET} ${DIM}High Contrast${RESET} ${GRAY}┈┈┈┈┈┈${RESET}\n"
+          while IFS= read -r theme; do
+            [ -z "$theme" ] && continue
+            if [ "$theme" = "$CURRENT_THEME" ]; then
+              theme_list+="${GREEN}${RESET}  ${theme} ${DIM}(current)${RESET}\n"
+            else
+              theme_list+="${ORANGE}󰔎${RESET}  ${theme}\n"
+            fi
+          done <<< "$(printf "%b" "$contrast_themes")"
+
+          theme_list+="${GRAY}┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈${RESET}\n"
+          theme_list+="${RED}󰌍${RESET}  Back"
+
+          local selected_theme
+          selected_theme=$(printf "%b" "$theme_list" | launcher "Select Theme" | sed 's/.*  //' | sed 's/ (current)//')
+
+          # ESC or Back exits the theme picker
+          [ -z "$selected_theme" ] || [ "$selected_theme" = "Back" ] && break
+
           THEME="$selected_theme"
           # Update config file
           if grep -q "^THEME:" "$CLI_CONFIG_DIR/${CLI_NAME}.conf"; then
@@ -3909,10 +3995,10 @@ ${RED}󰈆${RESET}  Exit
           else
             echo "THEME: $THEME" >> "$CLI_CONFIG_DIR/${CLI_NAME}.conf"
           fi
-          # Reload theme
-          init_pretty_print
-          send_notification "Theme changed to: $selected_theme"
-        fi
+          # Reload theme directly (faster than init_pretty_print)
+          load_theme "$THEME"
+          clear
+        done
         ;;
       Explore\ Channels)
         unset search_term
@@ -4033,6 +4119,9 @@ ${RED}󰈆${RESET}  Exit
         check_ytdlp_version
         read -r -p "Press Enter to continue..."
         ;;
+      Check\ for\ Updates)
+        check_update
+        ;;
       Back)
         break
         ;;
@@ -4051,9 +4140,6 @@ ${RED}󰈆${RESET}  Exit
     ;;
   Exit)
     byebye
-    ;;
-  "")
-    # Separator selected, skip
     ;;
   *)
     echo "Invalid action" >&2
@@ -4143,7 +4229,7 @@ while [ $# -gt 0 ]; do
     byebye
     ;;
   -U | --update)
-    check_update "A new version of $CLI_NAME has been found would you like to upgrade? (y/n)"
+    check_update
     exit 0
     ;;
   -S | --search)
@@ -4431,23 +4517,6 @@ Example:
   shift
 done
 
-# Check for updates if enabled
-if [ "$UPDATE_CHECK" = "true" ]; then
-  # setup for ui
-  timestamp_file="$CLI_CACHE_DIR/.last_update_check"
-
-  # Time interval in seconds (6 hours = 21600 seconds)
-  interval=$((6 * 60 * 60))
-
-  # Determine whether to run the update check
-  current_time=$(date +%s)
-  last_check_time=$(cat "$timestamp_file" 2>/dev/null || echo 0)
-
-  if ((current_time - last_check_time >= interval)); then
-    echo "$current_time" >"$timestamp_file"
-    check_update "A new version of $CLI_NAME has been found would you like to upgrade? (y/n)"
-  fi
-fi
 if [ "$WELCOME_SCREEN" = "true" ]; then
   # setup for ui
   timestamp_file="$CLI_CACHE_DIR/.last_welcome"
